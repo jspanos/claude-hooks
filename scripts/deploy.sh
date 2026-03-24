@@ -145,7 +145,41 @@ copy_file "$PROJECT_DIR/.claude/hooks/audit/post-tool-audit.sh" "$DEST/audit/pos
 copy_file "$PROJECT_DIR/.claude/hooks/context/session-start-inject.sh" "$DEST/context/session-start-inject.sh"
 copy_file "$PROJECT_DIR/.claude/hooks/context/prompt-inject.sh"        "$DEST/context/prompt-inject.sh"
 
-# ── Step 3a: Update ~/.claude/CLAUDE.md (global mode) ────────────────────────
+# ── Step 3a: Write/merge ~/.claude/settings.json (global mode) ───────────────
+
+if ! $LOCAL_MODE; then
+  GLOBAL_SETTINGS_SRC="$PROJECT_DIR/.claude/settings.global.json"
+  GLOBAL_SETTINGS_DST="$HOME/.claude/settings.json"
+
+  if [[ ! -f "$GLOBAL_SETTINGS_SRC" ]]; then
+    warn "No .claude/settings.global.json found — skipping global settings update"
+  elif $DRY_RUN; then
+    if [[ -f "$GLOBAL_SETTINGS_DST" ]]; then
+      printf "  [dry-run] merge hooks → ~/.claude/settings.json (existing file)\n"
+    else
+      printf "  [dry-run] cp .claude/settings.global.json → ~/.claude/settings.json (new file)\n"
+    fi
+  else
+    if ! command -v jq &>/dev/null; then
+      warn "jq not found — cannot update ~/.claude/settings.json. Install jq or add hooks manually."
+    else
+      mkdir -p "$HOME/.claude"
+      if [[ ! -f "$GLOBAL_SETTINGS_DST" ]]; then
+        cp "$GLOBAL_SETTINGS_SRC" "$GLOBAL_SETTINGS_DST"
+        log "~/.claude/settings.json (created)"
+      else
+        new_hooks="$(jq '.hooks' "$GLOBAL_SETTINGS_SRC")"
+        merged="$(jq --argjson hooks "$new_hooks" \
+          'if .hooks then .hooks = (.hooks * $hooks) else .hooks = $hooks end' \
+          "$GLOBAL_SETTINGS_DST")"
+        echo "$merged" > "$GLOBAL_SETTINGS_DST"
+        log "~/.claude/settings.json (hooks merged)"
+      fi
+    fi
+  fi
+fi
+
+# ── Step 3b: Update ~/.claude/CLAUDE.md (global mode) ────────────────────────
 
 if $UPDATE_CLAUDE_MD; then
   CLAUDE_MD_SRC="$PROJECT_DIR/.claude/CLAUDE.md"
@@ -161,7 +195,7 @@ if $UPDATE_CLAUDE_MD; then
   fi
 fi
 
-# ── Step 3b: Write/merge .claude/settings.json (local mode) ──────────────────
+# ── Step 3c: Write/merge .claude/settings.json (local mode) ──────────────────
 
 if $LOCAL_MODE; then
   SETTINGS_SRC="$PROJECT_DIR/.claude/settings.json"
