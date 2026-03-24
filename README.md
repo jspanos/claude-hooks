@@ -19,11 +19,13 @@ Everything deploys to `~/.claude/hooks/` and applies globally — once installed
 # Install dependencies (macOS)
 brew install jq
 
-# Deploy globally
+# Deploy globally — active in every Claude Code project on this machine
 ./scripts/deploy.sh
-```
 
-That's it. All 7 safety rules are now active in every Claude Code session.
+# Or deploy into a specific project only
+./scripts/deploy.sh --local /path/to/your/project
+./scripts/deploy.sh --local   # current directory
+```
 
 ---
 
@@ -332,6 +334,8 @@ The test harness (`tests/lib/assert.sh`) mocks `deny_and_log` and `deny_tool_use
 
 ## Deployment
 
+### Global (all projects)
+
 ```bash
 ./scripts/deploy.sh               # run tests, then deploy to ~/.claude/hooks/
 ./scripts/deploy.sh --dry-run     # preview what would be copied
@@ -339,7 +343,19 @@ The test harness (`tests/lib/assert.sh`) mocks `deny_and_log` and `deny_tool_use
 ./scripts/deploy.sh --no-claude-md  # don't update ~/.claude/CLAUDE.md
 ```
 
-Files are copied to `~/.claude/hooks/` and take effect immediately in new Claude Code sessions.
+Copies hook scripts to `~/.claude/hooks/` — active in every Claude Code project on this machine.
+
+### Local (one project)
+
+```bash
+./scripts/deploy.sh --local                      # install into current directory
+./scripts/deploy.sh --local /path/to/project     # install into a specific project
+./scripts/deploy.sh --local ~/projects/foo --dry-run  # preview
+```
+
+Copies hooks to `<project>/.claude/hooks/` and writes or merges hook entries into `<project>/.claude/settings.json`. Scoped to that project only — no other projects are affected.
+
+If `.claude/settings.json` already exists in the target project, the hook configuration is merged in using `jq` (existing keys are preserved).
 
 ---
 

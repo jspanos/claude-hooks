@@ -34,7 +34,7 @@ cat scripts/SCRIPTS.md
 
 | Script | Description | Key Options |
 |--------|-------------|-------------|
-| `scripts/deploy.sh` | Deploy hook scripts to `~/.claude/hooks/` for global use | `--dry-run`, `--force`, `--no-claude-md` |
+| `scripts/deploy.sh` | Deploy hook scripts globally to `~/.claude/hooks/` or locally into a specific project | `--dry-run`, `--force`, `--no-claude-md`, `--local [path]` |
 
 ---
 
