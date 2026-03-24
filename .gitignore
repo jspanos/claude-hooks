@@ -1,0 +1,3 @@
+test_dirty.py
+tests/debug-*.sh
+.claude/logs/
