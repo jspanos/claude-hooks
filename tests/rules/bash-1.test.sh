@@ -31,6 +31,21 @@ assert_blocked "absolute path inside PROJECT_DIR" "bash-1"
 bash_check_absolute_paths "/home/testuser/secret.txt"
 assert_blocked "absolute path inside HOME" "bash-1"
 
+suite "Absolute paths — CWD-relative suggestions"
+
+# When CWD is a subdirectory, relative path should use ../
+CWD="/home/testuser/myproject/web"
+bash_check_absolute_paths "cd /home/testuser/myproject/src && ls"
+assert_blocked "absolute path from subdir CWD suggests ../src" "bash-1"
+
+# When CWD matches PROJECT_DIR, relative path is ./subdir
+CWD="/home/testuser/myproject"
+bash_check_absolute_paths "cat /home/testuser/myproject/src/file.txt"
+assert_blocked "absolute path from project root CWD suggests src/file.txt" "bash-1"
+
+# Reset CWD
+CWD="$PROJECT_DIR"
+
 suite "Absolute paths — allowed"
 
 bash_check_absolute_paths "cat ./src/file.txt"
