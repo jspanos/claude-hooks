@@ -62,6 +62,17 @@ unset -f command
 
 suite "Python venv — allowed"
 
+# stdlib utility modules should work without a venv
+rm -rf "$PROJECT_DIR/.venv"
+bash_check_python_venv "python3 -m json.tool mcp.json"
+assert_allowed "python3 -m json.tool (stdlib, no venv)"
+
+bash_check_python_venv "python3 -m http.server 8080"
+assert_allowed "python3 -m http.server (stdlib, no venv)"
+
+bash_check_python_venv "python3 -m zipfile -l archive.zip"
+assert_allowed "python3 -m zipfile (stdlib, no venv)"
+
 bash_check_python_venv "python3 --version"
 assert_allowed "python3 --version"
 

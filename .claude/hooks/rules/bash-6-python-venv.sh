@@ -31,6 +31,12 @@ bash_check_python_venv() {
     return 0
   fi
 
+  # ── Always allow: stdlib utility modules (no venv needed) ────────────────
+  # These ship with Python and never import third-party packages.
+  if printf '%s' "$cmd" | grep -qE '^\s*python[23]?\s+-m\s+(json\.tool|http\.server|zipfile|compileall|py_compile|timeit|calendar|base64|uuid|platform|sysconfig|site|ensurepip|tokenize|ast|dis|pdb|cProfile|profile|trace|unittest|doctest)\b'; then
+    return 0
+  fi
+
   # ── Always allow: uv run python... ───────────────────────────────────────
   # (uv run handles venv activation automatically)
   if printf '%s' "$cmd" | grep -qE '^\s*uv\s+run\s+python'; then

@@ -1,24 +1,25 @@
 # Global Agent Instructions
 
-## Paths
-- Use **relative paths** in bash commands. Avoid absolute paths within the project or home directory.
-- System paths (`/usr/`, `/tmp/`, `/opt/homebrew/`, `/dev/null`) are always fine.
+## Hooks
 
-## Python
-- Never use bare `python` — always `python3`
-- All Python work must run inside a virtual environment (`.venv/`)
-- Use `uv` for environment and package management:
-  - Create venv: `uv venv`
-  - Add packages: `uv add <package>` (not pip install)
-  - Run scripts: `uv run python3 <script>`
-- Only use `.venv/bin/python3` or `uv run python3` — never bare `python3` without a venv
+Safety hooks are deployed globally and enforce rules automatically. They block violations with corrective error messages — no need to memorize details. Brief guidance below helps avoid triggering them (saves a round-trip).
 
-## Scripts
-- Never create inline scripts (no `bash -c 'a; b; c; d'`, no heredoc script files, no `echo '#!/bin/bash' > file.sh`)
-- When automation is needed, create a proper script file with `--help` support
-- Check if a `scripts/` directory exists in the project — if so, check `scripts/SCRIPTS.md` first
+- **Paths**: Use relative paths. System paths (`/usr/`, `/tmp/`, `/opt/homebrew/`, `/dev/null`) are fine.
+- **Python**: Use `uv run python3` or `.venv/bin/python3`. Use `uv add` for packages, `uv venv` for environments.
+- **Scripts**: No inline scripts. Use `scripts/` directory workflow. Check `scripts/SCRIPTS.md` first if it exists.
+- **Bash**: No `curl|bash`, `xargs rm`, `find -delete`. Prefer Edit/Write tools over shell redirects for project files.
+- **Sensitive files**: Writes to `.env`, `*.pem`, `.ssh/`, credentials, kubeconfig are blocked.
 
-## Bash Safety
-- Never pipe network content to an interpreter: no `curl | bash`, `wget | sh`
-- Never use `xargs rm` or `find -delete` without a dry-run step first
-- Prefer git-tracked edits (Edit/Write tools) over shell redirects for project files
+## Communication Style
+
+Respond terse. All technical substance stays. Only fluff dies.
+
+Drop: articles (a/an/the), filler (just/really/basically/actually/simply), pleasantries (sure/certainly/happy to), hedging (maybe/perhaps/I think). Fragments OK. Short synonyms (big not extensive, fix not "implement a solution for").
+
+Pattern: [thing] [action] [reason]. [next step].
+
+- Bad: "Sure! I'd be happy to help you with that. The issue you're experiencing is likely caused by..."
+- Good: "Bug in auth middleware. Token expiry check uses `<` not `<=`. Fix:"
+
+Keep exact: code blocks, technical terms, error messages, file paths, URLs.
+Write normal: code, commits, PRs, security warnings, irreversible action confirmations.
