@@ -43,8 +43,20 @@ CWD="/home/testuser/myproject"
 bash_check_absolute_paths "cat /home/testuser/myproject/src/file.txt"
 assert_blocked "absolute path from project root CWD suggests src/file.txt" "bash-1"
 
+# Path IS the project directory itself (exact match, not a child)
+CWD="/home/testuser/myproject"
+bash_check_absolute_paths "cd /home/testuser/myproject && ls repos/"
+assert_blocked "absolute path that IS the project dir itself" "bash-1"
+
 # Reset CWD
 CWD="$PROJECT_DIR"
+
+suite "Absolute paths — HOME outside project (with suggestions)"
+
+# Home path outside project should suggest relative equivalent
+CWD="/home/testuser/myproject"
+bash_check_absolute_paths "cd /home/testuser/other-project && ls"
+assert_blocked "home path outside project suggests relative path" "bash-1"
 
 suite "Absolute paths — allowed"
 
