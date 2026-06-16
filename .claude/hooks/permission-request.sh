@@ -142,6 +142,11 @@ _is_sensitive_path() {
 _bash_is_dangerous() {
   local cmd="$1"
 
+  # Mask safe git subcommands that share a name with destructive shell verbs.
+  # 'git rm' stages a removal (reversible, repo-scoped) — it is not filesystem
+  # 'rm -rf' and must not trip the recursive-deletion pattern below.
+  cmd="$(printf '%s' "$cmd" | perl -pe 's/\bgit\s+rm\b/gitDEL/g')"
+
   local -a DENY_PATTERNS=(
     # Recursive force deletion
     'rm\s+(-[^\s]*[rR][^\s]*[fF]|-[^\s]*[fF][^\s]*[rR]|-rf|-fr)'
