@@ -212,6 +212,13 @@ _bash_is_external_publish() {
 
 case "$TOOL_NAME" in
 
+  # ── Interactive UI tool: must pass through untouched ───────────────────────
+  # Returning {behavior:allow} here makes the harness skip rendering the menu,
+  # yielding empty answers. Exit with no JSON so default handling runs.
+  AskUserQuestion)
+    exit 0
+    ;;
+
   # ── Read-only tools: no risk, always allow ─────────────────────────────────
   Glob|Grep|Read|LS|NotebookRead|LSP)
     _allow "read-only tool"
@@ -224,7 +231,7 @@ case "$TOOL_NAME" in
 
   # ── Agent / task management: allow ────────────────────────────────────────
   Agent|TaskCreate|TaskUpdate|TaskGet|TaskList|TaskOutput|TaskStop|\
-  SendMessage|AskUserQuestion|TeamCreate|TeamDelete)
+  SendMessage|TeamCreate|TeamDelete)
     _allow "agent/task operation"
     ;;
 

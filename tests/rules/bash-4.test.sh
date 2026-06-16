@@ -38,6 +38,29 @@ long_code="$(python3 -c "print('x' * 200)")"
 bash_check_inline_scripts "python3 -c '$long_code'"
 assert_blocked "large python -c (200+ chars)" "bash-4"
 
+bash_check_inline_scripts "uv run python3 -c '$long_code'"
+assert_blocked "large uv run python3 -c (200+ chars)" "bash-4"
+
+bash_check_inline_scripts "uv run python -c '$long_code'"
+assert_blocked "large uv run python -c (200+ chars)" "bash-4"
+
+bash_check_inline_scripts ".venv/bin/python3 -c '$long_code'"
+assert_blocked "large .venv/bin/python3 -c (200+ chars)" "bash-4"
+
+bash_check_inline_scripts "curl -sS http://x/y | python3 -c '$long_code'"
+assert_blocked "pipe to python3 -c (200+ chars)" "bash-4"
+
+bash_check_inline_scripts "curl -sS http://x/y | uv run python3 -c '$long_code'"
+assert_blocked "pipe to uv run python3 -c (200+ chars)" "bash-4"
+
+bash_check_inline_scripts "foo && python3 -c '$long_code'"
+assert_blocked "&& python3 -c (200+ chars)" "bash-4"
+
+# Multi-line command: backslash line continuation with actual newlines
+multiline_cmd=$'curl -sS "http://x/y" \\\n | python3 -c "'"$long_code"'"'
+bash_check_inline_scripts "$multiline_cmd"
+assert_blocked "multi-line pipe to python3 -c (200+ chars)" "bash-4"
+
 suite "Inline scripts — allowed"
 
 bash_check_inline_scripts "bash -c 'echo hello'"
@@ -48,6 +71,15 @@ assert_allowed "bash -c with 3 separators (below threshold)"
 
 bash_check_inline_scripts "python3 -c 'print(1)'"
 assert_allowed "python3 -c with short code"
+
+bash_check_inline_scripts "uv run python3 -c 'print(1)'"
+assert_allowed "uv run python3 -c with short code"
+
+bash_check_inline_scripts ".venv/bin/python3 -c 'print(1)'"
+assert_allowed ".venv/bin/python3 -c with short code"
+
+bash_check_inline_scripts "curl -sS http://x/y | python3 -c 'print(sys.stdin.read())'"
+assert_allowed "pipe to python3 -c with short code"
 
 bash_check_inline_scripts "npm install"
 assert_allowed "normal command (npm install)"

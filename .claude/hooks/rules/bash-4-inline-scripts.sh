@@ -46,15 +46,23 @@ bash_check_inline_scripts() {
   fi
 
   # ── Pattern 4: python/node/ruby -c/-e with substantial inline code ─────────
-  if [[ -z "$reason" ]] && \
-     printf '%s' "$cmd" | grep -qE '^\s*(python[23]?|node|ruby)\s+-[ce]\s+'; then
-    local inner
-    inner="$(printf '%s' "$cmd" | sed -E "s/^[[:space:]]*(python[23]?|node|ruby)[[:space:]]+-[ce][[:space:]]*['\"]//;s/['\"][[:space:]]*$//")"
-    local char_count="${#inner}"
-    if [[ "$char_count" -gt 150 ]]; then
-      local lang
-      lang="$(printf '%s' "$cmd" | grep -oE 'python[23]?|node|ruby' | head -1)"
-      reason="inline $lang script with $char_count chars — this is a script"
+  # Matches at start-of-command OR after a pipeline boundary (| && || ;).
+  # Prefix also covers `uv run python` and `.venv/bin/python` so bash-6's
+  # venv-allowlist doesn't create a hole. Newlines are flattened first so
+  # multi-line commands (e.g. `curl ... \\\n | python3 -c "..."`) still match.
+  if [[ -z "$reason" ]]; then
+    local flat_cmd
+    flat_cmd="$(printf '%s' "$cmd" | tr '\n' ' ')"
+    if printf '%s' "$flat_cmd" | grep -qE '(^|[|&;][|&]?[[:space:]]*)(uv[[:space:]]+run[[:space:]]+python[23]?|(\.venv|venv)/bin/python[23]?|python[23]?|node|ruby)[[:space:]]+-[ce][[:space:]]+'; then
+      local inner
+      # Greedy .* strips through the LAST -c/-e invocation and its opening quote
+      inner="$(printf '%s' "$flat_cmd" | sed -E "s@^.*(uv[[:space:]]+run[[:space:]]+python[23]?|(\.venv|venv)/bin/python[23]?|python[23]?|node|ruby)[[:space:]]+-[ce][[:space:]]*['\"]@@;s/['\"][[:space:]]*\$//")"
+      local char_count="${#inner}"
+      if [[ "$char_count" -gt 150 ]]; then
+        local lang
+        lang="$(printf '%s' "$flat_cmd" | grep -oE 'python[23]?|node|ruby' | tail -1)"
+        reason="inline $lang script with $char_count chars — this is a script"
+      fi
     fi
   fi
 
