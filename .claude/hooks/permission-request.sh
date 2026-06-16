@@ -106,6 +106,15 @@ _within_project() {
   [[ -n "$PROJECT_DIR" && "$path" == "$PROJECT_DIR"/* ]]
 }
 
+# True if file path is a git-managed scratch/message file (e.g. COMMIT_MSG.tmp,
+# COMMIT_EDITMSG, MERGE_MSG, TAG_EDITMSG, SQUASH_MSG) inside any repo's .git dir.
+# These are throwaway commit-message buffers; writing them is always safe and
+# routinely happens outside the current project (committing in another repo).
+_is_git_commit_tmp() {
+  local path="$1"
+  printf '%s' "$path" | grep -qE '(^|/)\.git/([A-Z_]*MSG[A-Za-z._]*|COMMIT_EDITMSG)(\.tmp)?$'
+}
+
 # True if file path matches a sensitive pattern
 _is_sensitive_path() {
   local path="$1"
@@ -269,6 +278,10 @@ case "$TOOL_NAME" in
 
     if _is_sensitive_path "$FILE_PATH"; then
       _deny "Write to sensitive file path '$FILE_PATH' is not permitted."
+    fi
+
+    if _is_git_commit_tmp "$FILE_PATH"; then
+      _allow "git commit-message temp file"
     fi
 
     if _within_project "$FILE_PATH"; then
