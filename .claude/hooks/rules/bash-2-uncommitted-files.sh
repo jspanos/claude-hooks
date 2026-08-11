@@ -1,12 +1,14 @@
 # =============================================================================
 # bash-2-uncommitted-files.sh — Rule: Protect files with uncommitted git changes
 #
-# Detect commands that could delete or destructively overwrite files, extract
-# the target path(s), and check git status. Block if the target has uncommitted
-# changes (modified, staged, or untracked) to prevent permanent data loss.
+# Target extraction lives in lib/mutation-targets.sh (shared with bash-7), so
+# this rule only decides policy: block when a destroyed path has uncommitted
+# work that git could not recover.
 #
-# Covered operations: rm, unlink, output-redirect (>), sed -i, perl -i,
-# truncate, dd of=, tee, mv (source)
+# Covered operations: rm, unlink, shred, output-redirect (>), sed -i, perl -i,
+# truncate, ed, ex, dd of=, tee, mv, cp, install, ln -f, rsync, scp, patch,
+# git checkout/restore/clean -f/reset --hard — each also detected behind a
+# `cd <dir> &&` prefix or later in a pipeline.
 # =============================================================================
 
 bash_check_uncommitted_files() {
@@ -15,99 +17,40 @@ bash_check_uncommitted_files() {
   # Quick exit if not in a git repo
   git -C "$PROJECT_DIR" rev-parse --git-dir &>/dev/null 2>&1 || return 0
 
-  local op_type=""
-  local -a targets=()
+  extract_mutation_targets "$cmd"
+  [[ -z "$MUT_OP_TYPE" ]] && return 0
 
-  # ── rm / unlink ─────────────────────────────────────────────────────────────
-  if printf '%s' "$cmd" | grep -qE '^\s*(rm|unlink)\s'; then
-    op_type="deletion"
-    local args
-    args="$(printf '%s' "$cmd" | sed 's/^\s*\(rm\|unlink\)\s\+//')"
-    while IFS= read -r tok; do
-      [[ -n "$tok" && "$tok" != -* ]] && targets+=("$tok")
-    done < <(printf '%s' "$args" | tr ' ' '\n' | grep -v '^-' | grep -v '^$')
-  fi
+  # ── Whole-tree operations: block if anything at all is uncommitted ────────
+  if [[ -n "$MUT_WHOLE_TREE" ]]; then
+    local dirty
+    dirty="$(git -C "$PROJECT_DIR" status --porcelain 2>/dev/null | head -5)"
+    if [[ -n "$dirty" ]]; then
+      local count
+      count="$(git -C "$PROJECT_DIR" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+      deny_and_log "bash-2" \
+        "$MUT_WHOLE_TREE, and $count file(s) currently have uncommitted changes:
+$dirty
 
-  # ── Truncating output redirect: cmd > file  (but NOT >>  and NOT /dev/null) ─
-  if printf '%s' "$cmd" | grep -qE '[^>]>[^>=]'; then
-    op_type="${op_type:-overwrite}"
-    while IFS= read -r t; do
-      t="$(printf '%s' "$t" | sed 's/^[[:space:]]*//')"
-      [[ -n "$t" && "$t" != "/dev/null" && "$t" != "-" ]] && targets+=("$t")
-    done < <(printf '%s' "$cmd" | \
-      perl -ne 'while (m{(?<![>])>(?![>=])\s*([^\s|&;]+)}g) { print "$1\n" }')
-  fi
-
-  # ── sed -i / perl -i (in-place edit) ────────────────────────────────────────
-  if printf '%s' "$cmd" | grep -qE '\b(sed|perl)\s+(-i|--in-place)'; then
-    op_type="${op_type:-in-place edit}"
-    # Last non-flag token is typically the target file
-    local last_arg
-    last_arg="$(printf '%s' "$cmd" | awk '{print $NF}')"
-    [[ -n "$last_arg" && "$last_arg" != -* ]] && targets+=("$last_arg")
-  fi
-
-  # ── truncate ────────────────────────────────────────────────────────────────
-  if printf '%s' "$cmd" | grep -qE '^\s*truncate\s'; then
-    op_type="${op_type:-truncate}"
-    local trunc_target
-    trunc_target="$(printf '%s' "$cmd" | awk '{print $NF}')"
-    [[ -n "$trunc_target" && "$trunc_target" != -* ]] && targets+=("$trunc_target")
-  fi
-
-  # ── dd of=file ───────────────────────────────────────────────────────────────
-  if printf '%s' "$cmd" | grep -qE '\bdd\b.*\bof='; then
-    op_type="${op_type:-dd overwrite}"
-    local dd_target
-    dd_target="$(printf '%s' "$cmd" | grep -oE 'of=[^[:space:]]+' | sed 's/^of=//')"
-    [[ -n "$dd_target" ]] && targets+=("$dd_target")
-  fi
-
-  # ── tee (overwrites by default unless -a) ───────────────────────────────────
-  if printf '%s' "$cmd" | grep -qE '\btee\b' && ! printf '%s' "$cmd" | grep -qE '\btee\s+-a'; then
-    op_type="${op_type:-tee overwrite}"
-    local tee_target
-    tee_target="$(printf '%s' "$cmd" | grep -oE '\btee\s+[^[:space:]|&;]+' | awk '{print $2}')"
-    [[ -n "$tee_target" ]] && targets+=("$tee_target")
-  fi
-
-  # ── mv (source file ceases to exist) ────────────────────────────────────────
-  if printf '%s' "$cmd" | grep -qE '^\s*mv\s'; then
-    op_type="${op_type:-move}"
-    local mv_src
-    mv_src="$(printf '%s' "$cmd" | sed 's/^\s*mv\s\+//' | awk '{print $1}')"
-    [[ -n "$mv_src" && "$mv_src" != -* ]] && targets+=("$mv_src")
-  fi
-
-  [[ ${#targets[@]} -eq 0 ]] && return 0
-
-  for target in "${targets[@]}"; do
-    # Skip shell globs — can't resolve at hook time
-    [[ "$target" == *'*'* || "$target" == *'?'* || "$target" == *'['* ]] && continue
-    # Skip variables that need expansion
-    [[ "$target" == '$'* ]] && continue
-
-    # Resolve to absolute path
-    local abs_path
-    if [[ "$target" == /* ]]; then
-      abs_path="$target"
-    else
-      abs_path="$CWD/$target"
+Commit or stash first ('git stash'), then re-run. If you only need to discard
+specific files, name them explicitly instead of operating on the whole tree."
     fi
+    return 0
+  fi
 
+  [[ ${#MUT_TARGETS[@]} -eq 0 ]] && return 0
+
+  local target
+  for target in "${MUT_TARGETS[@]}"; do
     # Only care about files inside the project
-    [[ "$abs_path" != "$PROJECT_DIR"/* && "$abs_path" != "$PROJECT_DIR" ]] && continue
+    [[ "$target" != "$PROJECT_DIR"/* && "$target" != "$PROJECT_DIR" ]] && continue
 
-    # Get path relative to project root for git
-    local rel_path="${abs_path#$PROJECT_DIR/}"
-    [[ -z "$rel_path" ]] && continue
+    local rel_path="${target#$PROJECT_DIR/}"
+    [[ -z "$rel_path" || "$rel_path" == "$target" ]] && continue
 
-    # Query git status for this specific path
     local git_status
     git_status="$(git -C "$PROJECT_DIR" status --porcelain -- "$rel_path" 2>/dev/null)"
     [[ -z "$git_status" ]] && continue
 
-    # Decode status flags
     local xy="${git_status:0:2}"
     local status_desc
     case "$xy" in
@@ -121,6 +64,6 @@ bash_check_uncommitted_files() {
     esac
 
     deny_and_log "bash-2" \
-      "'$rel_path' has $status_desc and would be affected by $op_type. Commit or stash your changes first ('git stash') before using shell commands to modify this file. For edits, prefer the Edit/Write tools which keep changes visible in git."
+      "'$rel_path' has $status_desc and would be affected by $MUT_OP_TYPE. Commit or stash your changes first ('git stash') before using shell commands to modify this file. For edits, prefer the Edit/Write tools which keep changes visible in git."
   done
 }

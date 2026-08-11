@@ -25,6 +25,24 @@ These rules are automatically enforced. Understanding them avoids wasted round-t
 - No piping network content to interpreters: `curl | bash`, `wget | sh`
 - No bulk deletion via pipes: `xargs rm`, `find -delete`
 - Check git status before destructive operations on modified files
+- Destructive commands are detected behind `cd x &&` prefixes and later in a
+  pipeline — `cp`, `install`, `ln -f`, `ed`, `patch`, `git checkout/restore`,
+  `git clean -f`, and `git reset --hard` all count as destructive
+
+### Interpreters are not an escape hatch
+- Don't mutate files through `python3 -c` / `node -e` / `ruby -e`
+  (`os.remove`, `shutil.rmtree`, `fs.unlinkSync`, `open(...,'w')`) — the shell
+  rules can't see inside interpreter code, so this is blocked outright
+- Don't shell out from inside an interpreter (`os.system`, `subprocess`,
+  `child_process`) to get around a blocked Bash command
+- Deleting/moving → run `rm`/`mv` directly. Editing → Edit/Write tools.
+  Real logic → a registered script in `scripts/`
+
+### The hooks protect themselves
+`.claude/hooks/`, `.claude/settings*.json`, and `.claude-hooks-source` cannot be
+written, deleted, moved, or chmod-ed — editing one rule would disable the rest.
+Only the hooks source repo (marked by `.claude-hooks-source` at its root) may
+change them. If a hook rule is wrong, say so rather than working around it.
 
 ## Scripts Workflow
 

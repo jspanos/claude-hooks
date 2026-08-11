@@ -5,8 +5,11 @@ Safety guards, audit logging, and context injection for Claude Code — deployab
 ## Architecture
 
 ```
+.claude-hooks-source         # marker: this repo may edit its own hooks
 .claude/hooks/
   lib/common.sh              # shared utilities (sourced by all hooks)
+  lib/protected-paths.sh     # matcher for hook-infrastructure paths (bash-7, file-2)
+  lib/mutation-targets.sh    # "what does this command destroy?" (bash-2, bash-7)
   rules/                     # one file per rule, sourced by pre-tool-use.sh
     bash-1-absolute-paths.sh
     bash-2-uncommitted-files.sh
@@ -14,7 +17,10 @@ Safety guards, audit logging, and context injection for Claude Code — deployab
     bash-4-inline-scripts.sh
     bash-5-pipe-abuse.sh
     bash-6-python-venv.sh
+    bash-7-protected-config.sh
+    bash-8-interpreter-file-ops.sh
     file-1-sensitive-paths.sh
+    file-2-protected-config.sh
   pre-tool-use.sh            # PreToolUse dispatcher: logs + runs all rules
   permission-request.sh      # PermissionRequest: auto-allow/deny/defer
   audit/
@@ -50,7 +56,7 @@ Wired in `.claude/settings.json`:
 | Event | Script | Purpose |
 |---|---|---|
 | `PermissionRequest` | `permission-request.sh` | Auto-allow safe ops, auto-deny dangerous, defer external state changes |
-| `PreToolUse` | `pre-tool-use.sh` | Log + apply all 7 safety rules |
+| `PreToolUse` | `pre-tool-use.sh` | Log + apply all 10 safety rules |
 | `PostToolUse` | `audit/post-tool-audit.sh` | JSONL outcome log (async) |
 | `SessionStart` | `context/session-start-inject.sh` | Re-inject project context |
 | `UserPromptSubmit` | `context/prompt-inject.sh` | Keyword-triggered section injection |
@@ -65,12 +71,49 @@ Wired in `.claude/settings.json`:
 | `bash-4` | Bash | Inline scripts (heredocs, `bash -c` chains, echo shebang) |
 | `bash-5` | Bash | Pipe abuse: `curl\|bash`, `xargs rm`, `find -delete`, pipe to sudo |
 | `bash-6` | Bash | Bare `python`, pip install, python3 without venv |
+| `bash-7` | Bash | Deleting/overwriting/chmod-ing `.claude/hooks/`, `settings*.json` |
+| `bash-8` | Bash | Inline `python -c` / `node -e` code that mutates files or shells out |
 | `file-1` | Write/Edit | Writes to `.env`, `*.pem`, `.ssh/`, kubeconfig, credentials |
+| `file-2` | Write/Edit + any path-taking tool | Writes to hook enforcement files |
+
+`bash-2` and `bash-7` share `lib/mutation-targets.sh`, which walks a command
+segment by segment (tracking `cd`) and models: `rm`, `unlink`, `shred`, `mv`,
+`cp`, `install`, `ln -f`, `rsync`, `scp`, `truncate`, `ed`, `ex`, `sed -i`,
+`dd of=`, `tee`, `>` redirects, `chmod`/`chown`, `patch`, and
+`git checkout`/`restore`/`clean -f`/`reset --hard`.
+
+### Tool coverage
+
+`pre-tool-use.sh` applies file rules to `Write`, `Edit`, `NotebookEdit`, **and**
+any other tool (including MCP servers) that names a path *and* either carries a
+content-ish payload or has a write-ish name. Read-only tools match neither test
+and are untouched.
+
+### Protecting the hooks from themselves
+
+`bash-7` and `file-2` refuse to modify the enforcement layer, because an agent
+that can rewrite one rule file can disable all the others. The exemption is a
+`.claude-hooks-source` file at the repo root — and that marker is itself a
+protected path, so an agent cannot create it to self-authorise. Bootstrapping a
+new hooks-source checkout therefore requires a human to create the marker.
+
+### Known limitations — do not oversell these rules
+
+These are guardrails against accidents, not a security boundary:
+
+- **Interpreters are Turing-complete.** `bash-8` matches obvious API calls;
+  obfuscation (`getattr(os,'rem'+'ove')`, base64, `importlib`) defeats any
+  pattern match. Real containment needs OS-level sandboxing.
+- **Script contents are never inspected.** `Write scripts/x.py` then
+  `uv run python3 scripts/x.py` passes every rule. This is structural — the
+  `scripts/` workflow `bash-4` recommends is itself unchecked.
+- **Compiled/aliased escapes are unmodelled** — `make`, `npm run`, a shell
+  function, or any binary that writes files.
 
 ## Testing
 
 ```bash
-./tests/run-tests.sh               # run all 74 tests
+./tests/run-tests.sh               # run all rule tests
 bash tests/rules/bash-3.test.sh    # run a single rule
 ```
 
@@ -99,3 +142,9 @@ To add a new rule:
 3. Add a test file at `tests/rules/bash-N.test.sh`
 4. Run `./tests/run-tests.sh` to verify
 5. Run `./scripts/deploy.sh` to apply globally
+
+Shared helpers go in `.claude/hooks/lib/` and must be sourced from
+`pre-tool-use.sh`. `deploy.sh` copies `lib/*.sh` and `rules/*.sh` by glob, so
+new files there deploy automatically. A test that exercises a rule depending on
+a lib must source that lib itself — but always **after** `tests/lib/assert.sh`,
+so the `deny_and_log` mock stays installed.

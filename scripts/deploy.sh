@@ -130,8 +130,10 @@ echo ""
 copy_file "$PROJECT_DIR/.claude/hooks/pre-tool-use.sh"       "$DEST/pre-tool-use.sh"
 copy_file "$PROJECT_DIR/.claude/hooks/permission-request.sh" "$DEST/permission-request.sh"
 
-# Shared library
-copy_file "$PROJECT_DIR/.claude/hooks/lib/common.sh"         "$DEST/lib/common.sh"
+# Shared libraries (all files in lib/ — sourced by the dispatcher)
+for lib in "$PROJECT_DIR/.claude/hooks/lib/"*.sh; do
+  copy_file "$lib" "$DEST/lib/$(basename "$lib")"
+done
 
 # Rules (all files in rules/ — sorted, so numbering determines load order)
 for rule in "$PROJECT_DIR/.claude/hooks/rules/"*.sh; do

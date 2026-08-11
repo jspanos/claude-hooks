@@ -32,7 +32,8 @@ git() {
   command git "$@"
 }
 
-# Source the rule under test
+# Source the shared target extractor, then the rule under test
+source "$(cd "$RULES_DIR/.." && pwd)/lib/mutation-targets.sh"
 source "$RULES_DIR/bash-2-uncommitted-files.sh"
 
 # =============================================================================
@@ -53,7 +54,74 @@ GIT_MOCK_STATUS="?? file.txt"
 bash_check_uncommitted_files "sed -i 's/foo/bar/' file.txt"
 assert_blocked "sed -i on untracked file" "bash-2"
 
+suite "Mutators previously unmodelled — blocked"
+
+GIT_MOCK_STATUS=" M settings.json"
+bash_check_uncommitted_files "cd .claude && rm settings.json"
+assert_blocked "rm hidden behind a cd prefix" "bash-2"
+
+GIT_MOCK_STATUS=" M CLAUDE.md"
+bash_check_uncommitted_files "cp /dev/null CLAUDE.md"
+assert_blocked "cp overwriting the destination" "bash-2"
+
+GIT_MOCK_STATUS=" M CLAUDE.md"
+bash_check_uncommitted_files "git checkout -- CLAUDE.md"
+assert_blocked "git checkout discarding changes" "bash-2"
+
+GIT_MOCK_STATUS=" M CLAUDE.md"
+bash_check_uncommitted_files "git restore CLAUDE.md"
+assert_blocked "git restore discarding changes" "bash-2"
+
+GIT_MOCK_STATUS=" M CLAUDE.md"
+bash_check_uncommitted_files "install -m 644 /dev/null CLAUDE.md"
+assert_blocked "install overwriting the destination" "bash-2"
+
+GIT_MOCK_STATUS=" M CLAUDE.md"
+bash_check_uncommitted_files "ln -sf /dev/null CLAUDE.md"
+assert_blocked "ln -sf clobbering a file" "bash-2"
+
+GIT_MOCK_STATUS=" M CLAUDE.md"
+bash_check_uncommitted_files "ed -s CLAUDE.md"
+assert_blocked "ed in-place edit" "bash-2"
+
+GIT_MOCK_STATUS=" M CLAUDE.md"
+bash_check_uncommitted_files "echo x | tee CLAUDE.md"
+assert_blocked "tee overwrite after a pipe" "bash-2"
+
+GIT_MOCK_STATUS=" M CLAUDE.md"
+bash_check_uncommitted_files "git reset --hard HEAD"
+assert_blocked "git reset --hard with a dirty tree" "bash-2"
+
+GIT_MOCK_STATUS="?? scratch.txt"
+bash_check_uncommitted_files "git clean -fdx"
+assert_blocked "git clean -fdx with untracked files" "bash-2"
+
 suite "Uncommitted files — allowed"
+
+GIT_MOCK_STATUS=""
+bash_check_uncommitted_files "cd .claude && rm settings.json"
+assert_allowed "cd-prefixed rm on a clean file"
+
+GIT_MOCK_STATUS=""
+bash_check_uncommitted_files "git reset --hard HEAD"
+assert_allowed "git reset --hard on a clean tree"
+
+GIT_MOCK_STATUS=" M CLAUDE.md"
+bash_check_uncommitted_files "git checkout main"
+assert_allowed "git checkout switching branches (no path operand)"
+
+GIT_MOCK_STATUS=" M CLAUDE.md"
+bash_check_uncommitted_files "ln -s target linkname"
+assert_allowed "ln -s without -f (cannot clobber)"
+
+GIT_MOCK_STATUS=" M CLAUDE.md"
+bash_check_uncommitted_files "echo x >> CLAUDE.md"
+assert_allowed "append redirect (>> does not truncate)"
+
+GIT_MOCK_STATUS=" M CLAUDE.md"
+bash_check_uncommitted_files "cat CLAUDE.md"
+assert_allowed "reading a modified file"
+
 
 GIT_MOCK_STATUS=""
 bash_check_uncommitted_files "rm file.txt"

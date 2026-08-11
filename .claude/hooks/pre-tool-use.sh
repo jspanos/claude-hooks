@@ -9,6 +9,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/protected-paths.sh"
+source "$SCRIPT_DIR/lib/mutation-targets.sh"
 
 require_jq
 
@@ -53,6 +55,17 @@ deny_and_log() {
   deny_tool_use "[$rule] $reason"
 }
 
+# ─── Apply file rules to a path (shared by the file-tool + catch-all arms) ──
+run_file_rules() {
+  local path="$1"
+  [[ -z "$path" ]] && return 0
+  for rule_file in "$SCRIPT_DIR/rules/"file-*.sh; do
+    source "$rule_file"
+  done
+  file_check_sensitive_path   "$path"
+  file_check_protected_config "$path"
+}
+
 # ─── Source rules ONLY for tools that need them ─────────────────────────────
 case "$TOOL_NAME" in
   Bash)
@@ -61,20 +74,38 @@ case "$TOOL_NAME" in
     done
     COMMAND="$(printf '%s' "$TOOL_INPUT_JSON" | jq -r '.command // ""')"
     [[ -z "$COMMAND" ]] && exit 0
-    bash_check_absolute_paths    "$COMMAND"
-    bash_check_uncommitted_files "$COMMAND"
-    bash_check_remote_readonly   "$COMMAND"
-    bash_check_inline_scripts    "$COMMAND"
-    bash_check_pipe_abuse        "$COMMAND"
-    bash_check_python_venv       "$COMMAND"
+    bash_check_absolute_paths        "$COMMAND"
+    bash_check_uncommitted_files     "$COMMAND"
+    bash_check_remote_readonly       "$COMMAND"
+    bash_check_inline_scripts        "$COMMAND"
+    bash_check_pipe_abuse            "$COMMAND"
+    bash_check_python_venv           "$COMMAND"
+    bash_check_protected_config      "$COMMAND"
+    bash_check_interpreter_file_ops  "$COMMAND"
     ;;
-  Write|Edit)
-    for rule_file in "$SCRIPT_DIR/rules/"file-*.sh; do
-      source "$rule_file"
-    done
-    FILE_PATH="$(printf '%s' "$TOOL_INPUT_JSON" | jq -r '.file_path // ""')"
-    [[ -z "$FILE_PATH" ]] && exit 0
-    file_check_sensitive_path "$FILE_PATH"
+  Write|Edit|NotebookEdit)
+    FILE_PATH="$(printf '%s' "$TOOL_INPUT_JSON" | jq -r '.file_path // .notebook_path // ""')"
+    run_file_rules "$FILE_PATH"
+    ;;
+  *)
+    # Catch-all: MCP servers and future built-ins also write files, and used to
+    # skip every rule because the case above only named three tools. Apply the
+    # file rules to any tool that both names a path and looks like a writer —
+    # either by tool name or by carrying a content-ish payload. Read-only tools
+    # (Read/Grep/Glob) match neither test and fall through untouched.
+    CANDIDATE_PATH="$(printf '%s' "$TOOL_INPUT_JSON" | jq -r '
+      .file_path // .notebook_path // .target_file // .filePath // .path // ""')"
+    [[ -z "$CANDIDATE_PATH" ]] && exit 0
+
+    HAS_CONTENT="$(printf '%s' "$TOOL_INPUT_JSON" | jq -r '
+      if (has("content") or has("new_string") or has("new_str") or has("edits")
+          or has("new_source") or has("contents") or has("text") or has("data"))
+      then "yes" else "no" end')"
+
+    if [[ "$HAS_CONTENT" == "yes" ]] || \
+       printf '%s' "$TOOL_NAME" | grep -qiE 'write|edit|create|update|delete|remove|move|rename|save|patch|append'; then
+      run_file_rules "$CANDIDATE_PATH"
+    fi
     ;;
 esac
 

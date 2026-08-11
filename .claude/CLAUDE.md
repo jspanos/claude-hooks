@@ -7,8 +7,10 @@ Safety hooks are deployed globally and enforce rules automatically. They block v
 - **Paths**: Use relative paths. System paths (`/usr/`, `/tmp/`, `/opt/homebrew/`, `/dev/null`) are fine.
 - **Python**: Use `uv run python3` or `.venv/bin/python3`. Use `uv add` for packages, `uv venv` for environments.
 - **Scripts**: No inline scripts. Use `scripts/` directory workflow. Check `scripts/SCRIPTS.md` first if it exists.
-- **Bash**: No `curl|bash`, `xargs rm`, `find -delete`. Prefer Edit/Write tools over shell redirects for project files.
+- **Bash**: No `curl|bash`, `xargs rm`, `find -delete`. Prefer Edit/Write tools over shell redirects for project files. Destructive commands are caught behind `cd x &&` prefixes too, and include `cp`, `install`, `ln -f`, `patch`, `git checkout/restore`, `git clean -f`, `git reset --hard`.
 - **Sensitive files**: Writes to `.env`, `*.pem`, `.ssh/`, credentials, kubeconfig are blocked.
+- **Interpreters**: Don't mutate files via `python3 -c` / `node -e` / `ruby -e` (`os.remove`, `shutil.rmtree`, `fs.unlinkSync`, `open(...,'w')`) or shell out from them (`os.system`, `subprocess`). Use `rm`/`mv` directly, the Edit/Write tools, or a script in `scripts/`.
+- **The hooks themselves**: `.claude/hooks/` and `.claude/settings*.json` cannot be modified — changing one rule would disable the others. If a rule seems wrong, say so instead of working around it.
 
 ## Communication Style
 
