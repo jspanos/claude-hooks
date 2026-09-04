@@ -19,6 +19,7 @@ Safety guards, audit logging, and context injection for Claude Code — deployab
     bash-6-python-venv.sh
     bash-7-protected-config.sh
     bash-8-interpreter-file-ops.sh
+    bash-9-blocking-waits.sh
     file-1-sensitive-paths.sh
     file-2-protected-config.sh
   pre-tool-use.sh            # PreToolUse dispatcher: logs + runs all rules
@@ -56,8 +57,8 @@ Wired in `.claude/settings.json`:
 | Event | Script | Purpose |
 |---|---|---|
 | `PermissionRequest` | `permission-request.sh` | Auto-allow safe ops, auto-deny dangerous, defer external state changes |
-| `PreToolUse` | `pre-tool-use.sh` | Log + apply all 10 safety rules |
-| `PostToolUse` | `audit/post-tool-audit.sh` | JSONL outcome log (async) |
+| `PreToolUse` | `pre-tool-use.sh` | Log + apply all 11 rules; may rewrite the Bash `timeout` |
+| `PostToolUse` | `audit/post-tool-audit.sh` | JSONL outcome log with `duration_ms` (async) |
 | `SessionStart` | `context/session-start-inject.sh` | Re-inject project context |
 | `UserPromptSubmit` | `context/prompt-inject.sh` | Keyword-triggered section injection |
 
@@ -73,6 +74,7 @@ Wired in `.claude/settings.json`:
 | `bash-6` | Bash | Bare `python`, pip install, python3 without venv |
 | `bash-7` | Bash | Deleting/overwriting/chmod-ing `.claude/hooks/`, `settings*.json` |
 | `bash-8` | Bash | Inline `python -c` / `node -e` code that mutates files or shells out |
+| `bash-9` | Bash | Foreground waits on external state (CI watching, cluster/cloud waiters, `tail -f`, dev servers, `sleep` > 5s, `until`/`while` poll loops); also sets and clamps the Bash `timeout` |
 | `file-1` | Write/Edit | Writes to `.env`, `*.pem`, `.ssh/`, kubeconfig, credentials |
 | `file-2` | Write/Edit + any path-taking tool | Writes to hook enforcement files |
 
@@ -96,6 +98,32 @@ that can rewrite one rule file can disable all the others. The exemption is a
 `.claude-hooks-source` file at the repo root — and that marker is itself a
 protected path, so an agent cannot create it to self-authorise. Bootstrapping a
 new hooks-source checkout therefore requires a human to create the marker.
+
+### Wall-clock rules (bash-9)
+
+`bash-9` is the only rule aimed at wasted time rather than safety. It was
+derived from the audit log itself: over ~19k paired Bash calls, 29% of all Bash
+wall time went to `sleep` and `until`-poll loops, and ~170 calls hit the 600s
+ceiling and were killed — nearly all of them CI watchers. Only 1.3% of calls
+used `run_in_background`.
+
+Two halves:
+
+- **Deny foreground waits on external state** — the agent should background
+  them (`run_in_background: true`) or arm a `Monitor`, then keep working.
+- **Set the `timeout` for slow real work** via `hookSpecificOutput.updatedInput`
+  (tests 300s, browser/e2e 480s, builds and installs 600s) when the call gives
+  none, and clamp anything over the 600000ms ceiling. No `permissionDecision`
+  is emitted, so the normal permission flow still applies.
+
+`PostToolUse` records now carry `ts_ms` and `duration_ms`, so "what is slow"
+is a single `jq` over `audit.jsonl` instead of a Pre/Post join on ISO stamps
+that only had second resolution.
+
+Known false positive: the rule matches command *text*, so a shell command that
+merely mentions a blocked pattern (`perl -pi -e` rewriting docs that name
+`gh run watch`) is denied. Edit docs with the Edit/Write tools, which is the
+house rule anyway.
 
 ### Known limitations — do not oversell these rules
 

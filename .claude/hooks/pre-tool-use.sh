@@ -16,6 +16,7 @@ require_jq
 
 HOOK_INPUT="$(read_stdin)"
 TIMESTAMP="$(iso_timestamp)"
+TIMESTAMP_MS="$(epoch_ms)"
 
 # ─── Single jq call: emit all scalars as TSV ────────────────────────────────
 IFS=$'\t' read -r TOOL_NAME TOOL_USE_ID SESSION_ID CWD < <(
@@ -38,10 +39,10 @@ _log() {
   record="$(jq -cn \
     --arg ts "$TIMESTAMP" --arg session "$SESSION_ID" \
     --arg tool "$TOOL_NAME" --arg tid "$TOOL_USE_ID" \
-    --arg cwd "$CWD" \
+    --arg cwd "$CWD" --arg tsms "$TIMESTAMP_MS" \
     --argjson input "$TOOL_INPUT_JSON" \
     --argjson extra "$extra" \
-    '{timestamp:$ts, session_id:$session, event:"PreToolUse",
+    '{timestamp:$ts, ts_ms:($tsms|tonumber), session_id:$session, event:"PreToolUse",
       tool_name:$tool, tool_use_id:$tid, cwd:$cwd,
       tool_input:$input} + $extra')"
   write_audit_record "$record"
@@ -82,6 +83,27 @@ case "$TOOL_NAME" in
     bash_check_python_venv           "$COMMAND"
     bash_check_protected_config      "$COMMAND"
     bash_check_interpreter_file_ops  "$COMMAND"
+
+    # ── Wall-clock rules (run last: they may rewrite the tool input) ────────
+    IFS=$'\t' read -r RUN_IN_BACKGROUND TIMEOUT_MS < <(
+      printf '%s' "$TOOL_INPUT_JSON" | jq -r '
+        [ (if (.run_in_background // false) then "true" else "false" end)
+        , (.timeout // "" | tostring)
+        ] | @tsv'
+    )
+    bash_check_blocking_waits "$COMMAND" "$RUN_IN_BACKGROUND"
+
+    NEW_TIMEOUT="$(bash_suggest_timeout "$COMMAND" "$TIMEOUT_MS")"
+    if [[ -n "$NEW_TIMEOUT" && "$RUN_IN_BACKGROUND" != "true" ]]; then
+      UPDATED_INPUT="$(printf '%s' "$TOOL_INPUT_JSON" \
+        | jq -c --argjson t "$NEW_TIMEOUT" '. + {timeout: $t}')"
+      if [[ -n "$TIMEOUT_MS" ]]; then
+        NOTE="[bash-9] timeout clamped ${TIMEOUT_MS}ms → ${NEW_TIMEOUT}ms (600000ms is the Bash tool ceiling)."
+      else
+        NOTE="[bash-9] timeout set to ${NEW_TIMEOUT}ms — this command family routinely outruns the 120000ms default and would have been killed mid-run."
+      fi
+      allow_with_updated_input "$UPDATED_INPUT" "$NOTE"
+    fi
     ;;
   Write|Edit|NotebookEdit)
     FILE_PATH="$(printf '%s' "$TOOL_INPUT_JSON" | jq -r '.file_path // .notebook_path // ""')"

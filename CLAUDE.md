@@ -29,6 +29,19 @@ These rules are automatically enforced. Understanding them avoids wasted round-t
   pipeline — `cp`, `install`, `ln -f`, `ed`, `patch`, `git checkout/restore`,
   `git clean -f`, and `git reset --hard` all count as destructive
 
+### Waiting is not free
+- Foreground waits on **external state** are blocked: `gh run watch`,
+  `gh pr checks --watch`, `kubectl wait` / `rollout status`, cloud `wait`
+  subcommands, `flux reconcile`, `tail -f`, dev servers, `sleep` over 5s, and
+  hand-rolled `until/while … sleep` poll loops
+- Run those with `run_in_background: true` (a single notification when the
+  command exits) or as a `Monitor` (one event per state change), and keep
+  working while they wait
+- Foreground waiting on **real work** is fine — test suites, builds, installs.
+  Those get a timeout applied automatically when none is given: tests 300s,
+  browser/e2e 480s, builds and installs 600s. The Bash tool ceiling is
+  600000ms; larger values are clamped rather than rejected
+
 ### Interpreters are not an escape hatch
 - Don't mutate files through `python3 -c` / `node -e` / `ruby -e`
   (`os.remove`, `shutil.rmtree`, `fs.unlinkSync`, `open(...,'w')`) — the shell

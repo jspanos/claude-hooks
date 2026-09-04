@@ -82,8 +82,39 @@ deny_tool_use() {
 }
 
 # ---------------------------------------------------------------------------
+# Emit a PreToolUse response that rewrites the tool input, then exit 0.
+# No permissionDecision is set, so the normal permission flow still applies.
+# Usage: allow_with_updated_input "$UPDATED_TOOL_INPUT_JSON" "explanation"
+# ---------------------------------------------------------------------------
+allow_with_updated_input() {
+  local updated="$1"
+  local message="$2"
+  jq -n \
+    --argjson input "$updated" \
+    --arg msg "$message" \
+    '{
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        updatedInput: $input,
+        additionalContext: $msg
+      },
+      systemMessage: $msg
+    }'
+  exit 0
+}
+
+# ---------------------------------------------------------------------------
 # ISO 8601 UTC timestamp
 # ---------------------------------------------------------------------------
 iso_timestamp() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+# ---------------------------------------------------------------------------
+# Milliseconds since the epoch — second-resolution ISO stamps are too coarse
+# to measure how long tool calls actually take.
+# ---------------------------------------------------------------------------
+epoch_ms() {
+  perl -MTime::HiRes=time -e 'printf("%d", time() * 1000)' 2>/dev/null \
+    || echo $(( $(date +%s) * 1000 ))
 }
