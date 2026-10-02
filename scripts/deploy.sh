@@ -146,6 +146,10 @@ copy_file "$PROJECT_DIR/.claude/hooks/audit/post-tool-audit.sh" "$DEST/audit/pos
 # Context injection
 copy_file "$PROJECT_DIR/.claude/hooks/context/session-start-inject.sh" "$DEST/context/session-start-inject.sh"
 copy_file "$PROJECT_DIR/.claude/hooks/context/prompt-inject.sh"        "$DEST/context/prompt-inject.sh"
+copy_file "$PROJECT_DIR/.claude/hooks/context/prompt-triage.sh"        "$DEST/context/prompt-triage.sh"
+
+# Slot checklists read by prompt-triage.sh (resolved as ../../prompts/ from the hook)
+copy_file "$PROJECT_DIR/.claude/prompts/task-slots.md" "$DEST/../prompts/task-slots.md"
 
 # ── Step 3a: Write/merge ~/.claude/settings.json (global mode) ───────────────
 

@@ -54,6 +54,11 @@
             "type": "command",
             "command": "$HOME/.claude/hooks/context/prompt-inject.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/context/prompt-triage.sh",
+            "timeout": 10
           }
         ]
       }

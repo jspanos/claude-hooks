@@ -213,6 +213,14 @@ Two hooks keep Claude aware of your project without you having to repeat yoursel
 
 Edit `context/project-context.md` and the keyword-to-section mapping in `.claude/hooks/context/prompt-inject.sh` to match your project.
 
+### Prompt triage
+
+A second UserPromptSubmit hook, `prompt-triage.sh`, classifies each prompt (feature, debug, refactor, research, ops) and scores how well specified it is. When an expensive task arrives underspecified, it injects the matching slot checklist from `.claude/prompts/task-slots.md` and tells Claude to resolve what it can from the repo, then ask at most 4 batched questions. Well-specified prompts, slash commands, continuations, and "just do it" pass through with zero injected tokens.
+
+- Disable: `export CLAUDE_PROMPT_TRIAGE=0`
+- Tune the bar: `export CLAUDE_PROMPT_TRIAGE_THRESHOLD=3` (default)
+- Every triggered injection is logged to the audit JSONL with the task type, score, and missing slots.
+
 ---
 
 ## Expanding the System
@@ -379,6 +387,9 @@ If `.claude/settings.json` already exists in the target project, the hook config
   context/
     session-start-inject.sh  # SessionStart: inject project-context.md
     prompt-inject.sh         # UserPromptSubmit: keyword-triggered injection
+    prompt-triage.sh         # UserPromptSubmit: interview gate for vague prompts
+.claude/prompts/
+  task-slots.md              # per-task-type slot checklists (prompt-triage, /spec)
 tests/
   lib/assert.sh              # test harness
   rules/                     # *.test.sh per rule
