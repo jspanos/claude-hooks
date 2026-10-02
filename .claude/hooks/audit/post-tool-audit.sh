@@ -28,7 +28,7 @@ RECORD="$(jq -c --arg ts "$TIMESTAMP" --arg tsms "$TIMESTAMP_MS" '
     tool_name: (.tool_name // ""),
     tool_use_id: (.tool_use_id // ""),
     cwd: (.cwd // ""),
-    success: ((.tool_response.success // true) == true),
+    success: (.tool_response.success != false),
     tool_input: (.tool_input // {}),
     tool_response: (.tool_response // {})
   }')"

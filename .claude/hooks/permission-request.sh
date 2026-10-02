@@ -103,7 +103,26 @@ _within_project() {
   if [[ "$path" != /* ]]; then
     path="$CWD/$path"
   fi
-  [[ -n "$PROJECT_DIR" && "$path" == "$PROJECT_DIR"/* ]]
+  # Collapse ../ segments via the parent dir (when it exists)
+  local parent
+  if parent="$(cd "$(dirname "$path")" 2>/dev/null && pwd -P)"; then
+    path="$parent/$(basename "$path")"
+  fi
+  # Unresolved ../ (parent missing) could escape any prefix match — reject
+  [[ "$path" == *"/../"* || "$path" == *"/.." ]] && return 1
+
+  [[ -n "$PROJECT_DIR" && "$path" == "$PROJECT_DIR"/* ]] && return 0
+
+  # Extra trusted directories: CLAUDE_HOOKS_EXTRA_DIRS (colon-separated)
+  local -a extra=()
+  local IFS=':' dir
+  # shellcheck disable=SC2206
+  [[ -n "${CLAUDE_HOOKS_EXTRA_DIRS:-}" ]] && extra=(${CLAUDE_HOOKS_EXTRA_DIRS})
+  for dir in "${extra[@]}"; do
+    dir="${dir%/}"
+    [[ -n "$dir" && "$path" == "$dir"/* ]] && return 0
+  done
+  return 1
 }
 
 # True if file path is a git-managed scratch/message file (e.g. COMMIT_MSG.tmp,

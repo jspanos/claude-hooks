@@ -18,14 +18,16 @@ HOOK_INPUT="$(read_stdin)"
 TIMESTAMP="$(iso_timestamp)"
 TIMESTAMP_MS="$(epoch_ms)"
 
-# ─── Single jq call: emit all scalars as TSV ────────────────────────────────
-IFS=$'\t' read -r TOOL_NAME TOOL_USE_ID SESSION_ID CWD < <(
+# ─── Single jq call: emit all scalars, \x1f-separated ───────────────────────
+# Unit separator is non-whitespace IFS, so empty fields are preserved
+# (tab would collapse consecutive separators and shift fields).
+IFS=$'\x1f' read -r TOOL_NAME TOOL_USE_ID SESSION_ID CWD < <(
   printf '%s' "$HOOK_INPUT" | jq -r '
     [ (.tool_name // "")
     , (.tool_use_id // "")
     , (.session_id // "")
     , (.cwd // "")
-    ] | @tsv'
+    ] | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")'
 )
 # Extract tool_input as compact JSON (single second jq fork)
 TOOL_INPUT_JSON="$(printf '%s' "$HOOK_INPUT" | jq -c '.tool_input // {}')"
