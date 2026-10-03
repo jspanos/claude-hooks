@@ -13,8 +13,8 @@
 # Rules (by tool):
 #   Read-only tools     → always ALLOW
 #   Agent/task/plan ops → always ALLOW
-#   Write|Edit          → ALLOW within project (non-sensitive), DENY sensitive,
-#                         DEFER outside project
+#   Write|Edit          → DENY sensitive, ALLOW within project or any git work
+#                         tree (non-ignored), DEFER elsewhere
 #   Bash                → DENY dangerous patterns, DEFER external publishing,
 #                         ALLOW everything else
 #   Default             → ALLOW (pre-tool-use guards the real dangers)
@@ -134,6 +134,55 @@ _is_git_commit_tmp() {
   printf '%s' "$path" | grep -qE '(^|/)\.git/([A-Z_]*MSG[A-Za-z._]*|COMMIT_EDITMSG)(\.tmp)?$'
 }
 
+# Absolute path with a symlinked final component resolved, so a link inside a
+# trusted dir can't carry a write to its target elsewhere (e.g. repo/x -> ~/.zshrc)
+_real_path() {
+  local path="$1"
+  [[ "$path" != /* ]] && path="$CWD/$path"
+  if [[ -L "$path" ]]; then
+    path="$(perl -MCwd=abs_path -e 'print abs_path(shift) // ""' "$path")"
+  fi
+  printf '%s' "$path"
+}
+
+# git in a repo we don't control: never run its fsmonitor hook
+_git() {
+  git -c core.fsmonitor=false -C "$@"
+}
+
+# True if file path is inside some git work tree and not git-ignored, so any
+# edit is recoverable via git. Covers sibling repos without per-machine config.
+_within_git_worktree() {
+  local path="$1"
+  [[ "$path" != /* ]] && path="$CWD/$path"
+  # Never treat git internals as ordinary repo content
+  [[ "$path" == *"/.git/"* || "$path" == *"/.git" ]] && return 1
+
+  # Nearest existing ancestor (target file or its dirs may not exist yet)
+  local dir
+  dir="$(dirname "$path")"
+  while [[ ! -d "$dir" && "$dir" != "/" ]]; do
+    dir="$(dirname "$dir")"
+  done
+  dir="$(cd "$dir" 2>/dev/null && pwd -P)" || return 1
+  [[ "$dir" == "/" ]] && return 1
+
+  [[ "$(_git "$dir" rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]] || return 1
+
+  # A repo rooted at $HOME or above (dotfiles) would cover shell rc files etc.
+  local top home
+  top="$(_git "$dir" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  top="$(cd "$top" && pwd -P)" || return 1
+  home="$(cd "$HOME" 2>/dev/null && pwd -P)" || home="$HOME"
+  [[ "$top" == "/" || "$home" == "$top" || "$home" == "$top"/* ]] && return 1
+  # Agent config (hooks, settings) must never self-approve, versioned or not
+  [[ "$dir" == "$home/.claude" || "$dir" == "$home/.claude/"* ]] && return 1
+
+  # Ignored files (local config, build output) have no git history to restore from
+  _git "$dir" check-ignore -q -- "$path" 2>/dev/null && return 1
+  return 0
+}
+
 # True if file path matches a sensitive pattern
 _is_sensitive_path() {
   local path="$1"
@@ -164,7 +213,11 @@ _bash_is_dangerous() {
   # Mask safe git subcommands that share a name with destructive shell verbs.
   # 'git rm' stages a removal (reversible, repo-scoped) — it is not filesystem
   # 'rm -rf' and must not trip the recursive-deletion pattern below.
-  cmd="$(printf '%s' "$cmd" | perl -pe 's/\bgit\s+rm\b/gitDEL/g')"
+  # Only when git is the command word, and never if the command redefines git
+  # (`git(){ rm "$@"; }; git rm -rf /` would otherwise hide a real rm -rf).
+  if ! printf '%s' "$cmd" | grep -qE '(^|[^[:alnum:]_-])git[[:space:]]*\([[:space:]]*\)|function[[:space:]]+git\b|alias[[:space:]]+git='; then
+    cmd="$(printf '%s' "$cmd" | perl -pe 's/(^|[;&|(]\s*)git\s+rm\b/$1gitDEL/g')"
+  fi
 
   local -a DENY_PATTERNS=(
     # Recursive force deletion
@@ -300,20 +353,28 @@ case "$TOOL_NAME" in
     FILE_PATH="$(get_field "$HOOK_INPUT" ".tool_input.file_path")"
     [[ -z "$FILE_PATH" ]] && _allow "no file path"
 
-    if _is_sensitive_path "$FILE_PATH"; then
+    # Judge the symlink target, not the link: that's where the write lands
+    REAL_PATH="$(_real_path "$FILE_PATH")"
+    [[ -z "$REAL_PATH" ]] && _defer "symlink target unresolvable — requires user confirmation"
+
+    if _is_sensitive_path "$FILE_PATH" || _is_sensitive_path "$REAL_PATH"; then
       _deny "Write to sensitive file path '$FILE_PATH' is not permitted."
     fi
 
-    if _is_git_commit_tmp "$FILE_PATH"; then
+    if _is_git_commit_tmp "$REAL_PATH"; then
       _allow "git commit-message temp file"
     fi
 
-    if _within_project "$FILE_PATH"; then
+    if _within_project "$REAL_PATH"; then
       _allow "non-sensitive project file"
     fi
 
-    # Outside project directory: defer to user
-    _defer "file is outside project directory — requires user confirmation"
+    if _within_git_worktree "$REAL_PATH"; then
+      _allow "non-sensitive file in git work tree (recoverable)"
+    fi
+
+    # Outside project and any git repo: defer to user
+    _defer "file is outside project and git work trees — requires user confirmation"
     ;;
 
   # ── MCP tools: allow (they have their own access control) ─────────────────

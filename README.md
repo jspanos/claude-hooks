@@ -151,10 +151,13 @@ Separate from the safety rules, the `PermissionRequest` hook handles Claude Code
 | Project-local writes | Allow | Pre-tool rules apply |
 | Dangerous pattern (rm -rf, curl\|bash…) | Deny | Hard block |
 | Writes to sensitive paths | Deny | Hard block |
-| Writes outside project | Defer | Unusual; ask user |
+| Writes in any other git work tree (not git-ignored) | Allow | Recoverable via git |
+| Writes elsewhere (non-git dirs, ignored files, `.git/` internals, repos rooted at `$HOME` or above, `~/.claude/`) | Defer | Not recoverable or too broad; ask user |
 | External publishing (git push, npm publish, terraform apply…) | Defer | Irreversible; ask user |
 
 "Defer" means Claude Code shows you a confirmation dialog before proceeding.
+
+Write/Edit decisions are made on the symlink target, not the link, so a link inside a trusted repo can't carry a write somewhere else.
 
 ---
 
