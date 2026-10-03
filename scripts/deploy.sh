@@ -102,6 +102,21 @@ copy_file() {
   fi
 }
 
+# ── Step 0: Syntax-check every hook (always, even with --force) ──────────────
+# A broken dispatcher blocks every tool call in every session, and the rule
+# tests don't execute it — so a merge conflict marker would deploy cleanly.
+
+BROKEN=()
+while IFS= read -r -d '' f; do
+  if ! bash -n "$f" 2>/dev/null || grep -qE '^(<<<<<<<|=======|>>>>>>>)( |$)' "$f"; then
+    BROKEN+=("${f#$PROJECT_DIR/}")
+  fi
+done < <(find "$PROJECT_DIR/.claude/hooks" -name '*.sh' -print0)
+if (( ${#BROKEN[@]} )); then
+  err "Syntax error or conflict marker in: ${BROKEN[*]} — aborting deploy."
+  exit 1
+fi
+
 # ── Step 1: Run tests (unless --force) ───────────────────────────────────────
 
 if ! $FORCE; then
