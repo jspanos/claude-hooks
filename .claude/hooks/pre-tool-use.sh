@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/protected-paths.sh"
 source "$SCRIPT_DIR/lib/mutation-targets.sh"
+source "$SCRIPT_DIR/lib/git-push.sh"
 
 require_jq
 
@@ -86,6 +87,15 @@ case "$TOOL_NAME" in
     bash_check_protected_config      "$COMMAND"
     bash_check_interpreter_file_ops  "$COMMAND"
     bash_check_quoted_newline_hash   "$COMMAND"
+
+    # ── Risky git push → force a prompt ─────────────────────────────────────
+    # permission-request.sh only runs when a prompt was already coming; an
+    # allow rule like Bash(git *) skips it entirely. "ask" here overrides
+    # allow rules, so force/protected/tag pushes always reach the human.
+    if git_push_needs_review "$COMMAND" "$CWD"; then
+      _log '{"blocked":false,"ask":true,"rule":"git-push"}'
+      ask_tool_use "[git-push] Force, delete, tag, protected-branch, or unverifiable push — confirm before it leaves this machine."
+    fi
 
     # ── Wall-clock rules (run last: they may rewrite the tool input) ────────
     IFS=$'\t' read -r RUN_IN_BACKGROUND TIMEOUT_MS < <(

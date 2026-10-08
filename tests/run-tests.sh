@@ -20,8 +20,9 @@ run_test_file() {
 
   # Run in subprocess to isolate state
   local output exit_code
-  output="$(bash "$file" 2>&1)"
-  exit_code=$?
+  # `|| exit_code=$?` keeps set -e from aborting the run on a failing suite
+  exit_code=0
+  output="$(bash "$file" 2>&1)" || exit_code=$?
 
   echo "$output"
 

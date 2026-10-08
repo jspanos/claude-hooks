@@ -21,6 +21,8 @@ git -C "$REPO" branch feature
 git -C "$REPO" tag v1.0
 git -C "$REPO" remote add origin https://example.invalid/repo.git
 git -C "$REPO" remote add backup https://example.invalid/backup.git
+git -C "$REPO" symbolic-ref refs/remotes/backup/HEAD refs/remotes/backup/trunk-ish
+git -C "$REPO" remote add nohead https://example.invalid/nohead.git
 git -C "$REPO" update-ref refs/remotes/origin/trunk-ish HEAD
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk-ish
 git -C "$REPO" checkout -q feature
@@ -36,7 +38,7 @@ echo "git-push: permission-request push classification"
 
 suite "Routine pushes — auto-allowed"
 
-check "git push -q -u origin test/chart-version-current 2>&1 | tail -1"
+check "git push -q -u origin feature 2>&1 | tail -1"
 assert_allowed "push -u origin feature-branch | tail"
 
 check "git push"
@@ -218,7 +220,45 @@ assert_blocked "pushd to unknown repo"
 check "cd - && git push origin feature"
 assert_blocked "cd - to unknown repo"
 
+suite "Implicit widening — deferred"
+
+check "git push origin tags/v1.0"
+assert_blocked "tags/ prefix resolves to tag"
+
+check "git push origin feature:tags/v2"
+assert_blocked "tags/ dst DWIM"
+
+check "git push origin heads/main"
+assert_blocked "heads/main without colon"
+
+check "git push nohead feature"
+assert_blocked "remote with unknown default branch"
+
+check "git push --recurse-submodules=on-demand origin feature"
+assert_blocked "--recurse-submodules=on-demand"
+
+git -C "$REPO" config push.followTags true
+check "git push origin feature"
+assert_blocked "push.followTags config"
+git -C "$REPO" config --unset push.followTags
+
+git -C "$REPO" config remote.backup.mirror true
+git -C "$REPO" config branch.feature.pushRemote backup
+check "git push"
+assert_blocked "pushRemote points at a mirror remote"
+git -C "$REPO" config --unset remote.backup.mirror
+git -C "$REPO" config --unset branch.feature.pushRemote
+
 suite "Still routine"
+
+check "bash tests/rules/git-push.test.sh 2>&1 | tail -15; echo \"exit \${PIPESTATUS[0]}\""
+assert_allowed "running a file named git-push.test.sh is not a push"
+
+check "/usr/lib/git-core/git-push origin main"
+assert_blocked "git-push binary by path (not routine — listed here beside its false-positive twin)"
+
+check "git push --recurse-submodules=check origin feature"
+assert_allowed "--recurse-submodules=check"
 
 check "git push backup feature"
 assert_allowed "configured second remote"

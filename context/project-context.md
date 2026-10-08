@@ -59,7 +59,7 @@ Wired in `.claude/settings.json`:
 | Event | Script | Purpose |
 |---|---|---|
 | `PermissionRequest` | `permission-request.sh` | Auto-allow safe ops, auto-deny dangerous, defer external state changes (plain feature-branch `git push` is allowed; force/delete/tag/protected-branch pushes defer) |
-| `PreToolUse` | `pre-tool-use.sh` | Log + apply all 12 rules; may rewrite the Bash `timeout` |
+| `PreToolUse` | `pre-tool-use.sh` | Log + apply all 12 rules; may rewrite the Bash `timeout`; returns `ask` for risky git pushes (`lib/git-push.sh`) so allow rules like `Bash(git *)` can't skip the human |
 | `PostToolUse` | `audit/post-tool-audit.sh` | JSONL outcome log with `duration_ms` (async) |
 | `SessionStart` | `context/session-start-inject.sh` | Re-inject project context |
 | `UserPromptSubmit` | `context/prompt-inject.sh` | Keyword-triggered section injection |

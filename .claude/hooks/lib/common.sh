@@ -86,6 +86,20 @@ deny_tool_use() {
 # No permissionDecision is set, so the normal permission flow still applies.
 # Usage: allow_with_updated_input "$UPDATED_TOOL_INPUT_JSON" "explanation"
 # ---------------------------------------------------------------------------
+ask_tool_use() {
+  local reason="$1"
+  jq -n \
+    --arg reason "$reason" \
+    '{
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "ask",
+        permissionDecisionReason: $reason
+      }
+    }'
+  exit 0
+}
+
 allow_with_updated_input() {
   local updated="$1"
   local message="$2"

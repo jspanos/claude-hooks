@@ -46,7 +46,19 @@ _gp_is_protected() {
   local default
   default="$(_gp_git "$dir" symbolic-ref --short "refs/remotes/$remote/HEAD")"
   default="${default#"$remote"/}"
-  [[ -n "$default" && "$branch" == "$default" ]]
+  # Unknown default branch: can't rule it out. `git remote set-head <remote>
+  # --auto` records it once and lets routine pushes through.
+  [[ -z "$default" || "$branch" == "$default" ]]
+}
+
+# Remote an argument-less push uses: pushRemote > pushDefault > upstream.
+_gp_implicit_remote() {
+  local dir="$1" cur r key
+  cur="$(_gp_git "$dir" symbolic-ref --short -q HEAD)"
+  for key in ${cur:+"branch.$cur.pushRemote"} remote.pushDefault ${cur:+"branch.$cur.remote"}; do
+    r="$(_gp_git "$dir" config --get "$key")" && [[ -n "$r" ]] && { printf '%s' "$r"; return; }
+  done
+  printf origin
 }
 
 # Remote branch an argument-less `git push` would update (empty if unknown).
@@ -74,6 +86,8 @@ _gp_args_need_review() {
       # Alternate destination or remote-side program: never auto-approve.
       --repo*|--receive-pack*|--exec*) return 0 ;;
       --push-option|-o) shift ;;
+      --recurse-submodules=no|--recurse-submodules=check|--no-recurse-submodules) ;;
+      --recurse-submodules*) return 0 ;;   # pushes other repositories too
       --*) ;;
       *'>'|*'<') shift ;;               # bare redirect operator: skip its target
       *'>'*|*'<'*) ;;                   # 2>&1, >/dev/null
@@ -86,14 +100,19 @@ _gp_args_need_review() {
     shift
   done
 
-  local remote="${pos[0]:-origin}"
-  local -a refspecs=("${pos[@]:1}")
-
   # Must be a real repo, and the destination an already-configured remote —
   # never a URL or path (exfiltration, ext:: transports).
   _gp_git "$dir" rev-parse --git-dir >/dev/null || return 0
+  local remote="${pos[0]:-$(_gp_implicit_remote "$dir")}"
+  local -a refspecs=("${pos[@]:1}")
   _gp_git "$dir" remote | grep -qxF -- "$remote" || return 0
   [[ "$(_gp_git "$dir" config --bool "remote.$remote.mirror")" == true ]] && return 0
+
+  # Config that silently widens a plain push: annotated tags, submodules.
+  [[ "$(_gp_git "$dir" config --bool push.followTags)" == true ]] && return 0
+  case "$(_gp_git "$dir" config --get push.recurseSubmodules)" in
+    on-demand|only) return 0 ;;
+  esac
 
   # An earlier git command in the same line may have changed HEAD, tags,
   # aliases, remotes or config; what we read from the repo now is stale.
@@ -109,31 +128,31 @@ _gp_args_need_review() {
     return
   fi
 
-  local r src dst
+  local r src dst full
   for r in "${refspecs[@]}"; do
     [[ "$r" == +* || "$r" == *'*'* ]] && return 0   # force, or glob refspec
-    if [[ "$r" == *:* ]]; then
-      src="${r%%:*}" dst="${r#*:}"
-      [[ -z "$src" || -z "$dst" ]] && return 0
-    else
-      src="$r" dst="$r"
-      # A bare name that is a local tag (and not a branch) pushes the tag.
-      if _gp_git "$dir" show-ref -q --verify "refs/tags/$src" \
-         && ! _gp_git "$dir" show-ref -q --verify "refs/heads/$src"; then
-        return 0
-      fi
+    if [[ "$r" != *:* ]]; then
+      # No explicit dst: git resolves the name locally (tags win over
+      # branches) and pushes to the same ref. Let git do the resolving.
+      full="$(_gp_git "$dir" rev-parse --symbolic-full-name "$r")"
+      [[ "$full" == refs/heads/* ]] || return 0
+      _gp_is_protected "$dir" "$remote" "${full#refs/heads/}" && return 0
+      continue
     fi
-    [[ "$src" == refs/tags/* || "$dst" == refs/tags/* ]] && return 0
+
+    src="${r%%:*}" dst="${r#*:}"
+    [[ -z "$src" || -z "$dst" ]] && return 0
+    [[ "$src" == refs/tags/* || "$src" == tags/* ]] && return 0
     if [[ "$dst" == HEAD || "$dst" == @ ]]; then
       dst="$(_gp_git "$dir" symbolic-ref --short -q HEAD)"
       [[ -z "$dst" ]] && return 0
     fi
-    # git DWIMs "heads/main" to refs/heads/main; anything else under refs/
-    # (remotes, notes, namespaces) is unusual enough to ask about.
+    # git DWIMs "heads/main" to refs/heads/main and "tags/v1" to a tag;
+    # anything outside branches is unusual enough to ask about.
     case "$dst" in
-      refs/heads/*) dst="${dst#refs/heads/}" ;;
-      refs/*)       return 0 ;;
-      heads/*)      dst="${dst#heads/}" ;;
+      refs/heads/*)                      dst="${dst#refs/heads/}" ;;
+      refs/*|tags/*|remotes/*|notes/*)   return 0 ;;
+      heads/*)                           dst="${dst#heads/}" ;;
     esac
     _gp_is_protected "$dir" "$remote" "$dst" && return 0
   done
@@ -158,8 +177,11 @@ git_push_needs_review() {
   # fd redirects (2>&1, >&2, &>) are blanked first so '&' splits cleanly.
   while IFS= read -r seg; do
     mentions=""
-    [[ "$seg" =~ (^|[^[:alnum:]_])git([^[:alnum:]_]|$) \
-       && "$seg" =~ (^|[^[:alnum:]_])push([^[:alnum:]_]|$) ]] && mentions=1
+    # Whole words only ('-' and '.' count as word chars, so a file named
+    # tests/git-push.test.sh is not a push); the git-push binary is exact.
+    [[ "$seg" =~ (^|[^[:alnum:]_.-])git([^[:alnum:]_.-]|$) \
+       && "$seg" =~ (^|[^[:alnum:]_.-])push([^[:alnum:]_.-]|$) ]] && mentions=1
+    [[ "$seg" =~ (^|[[:space:]/])git-push([[:space:]]|$) ]] && return 0
     if [[ -n "$mentions" && "$seg" =~ [\$\`\\\(\)\{\}] ]]; then
       return 0
     fi
