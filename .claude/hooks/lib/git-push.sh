@@ -10,8 +10,14 @@
 #     prod(uction), stable, release*, or the remote's default branch
 #   • an implicit push whose target branch cannot be resolved, or whose
 #     remote has push refspecs / mirror configured
+#   • a destination that is not an already-configured remote (URL, path),
+#     --repo / --receive-pack / --exec, glob refspecs, non-heads refs
+#   • any push after a git command that may change HEAD, refs, aliases,
+#     remotes or config earlier in the same line (checkout, tag, config, …),
+#     or after pushd/popd/cd - (repo unknown)
 #   • anything the parser cannot fully model (fail closed): wrappers,
-#     expansions, escapes, `git -c`, and git aliases that may run push
+#     expansions, escapes, `git -c`, --git-dir/--work-tree/--namespace,
+#     and git aliases that may run push
 #
 # A false "defer" costs one prompt; a false "allow" skips the human, so every
 # ambiguity resolves to defer.
@@ -65,7 +71,9 @@ _gp_args_need_review() {
       --force|--force-with-lease*|--force-if-includes|--mirror|--all|--branches|\
       --delete|--tags|--follow-tags|--prune)
         return 0 ;;
-      --repo|--push-option|--receive-pack|--exec|-o) shift ;;
+      # Alternate destination or remote-side program: never auto-approve.
+      --repo*|--receive-pack*|--exec*) return 0 ;;
+      --push-option|-o) shift ;;
       --*) ;;
       *'>'|*'<') shift ;;               # bare redirect operator: skip its target
       *'>'*|*'<'*) ;;                   # 2>&1, >/dev/null
@@ -81,13 +89,19 @@ _gp_args_need_review() {
   local remote="${pos[0]:-origin}"
   local -a refspecs=("${pos[@]:1}")
 
+  # Must be a real repo, and the destination an already-configured remote —
+  # never a URL or path (exfiltration, ext:: transports).
+  _gp_git "$dir" rev-parse --git-dir >/dev/null || return 0
+  _gp_git "$dir" remote | grep -qxF -- "$remote" || return 0
   [[ "$(_gp_git "$dir" config --bool "remote.$remote.mirror")" == true ]] && return 0
+
+  # An earlier git command in the same line may have changed HEAD, tags,
+  # aliases, remotes or config; what we read from the repo now is stale.
+  [[ -n "${_GP_MUTATED:-}" ]] && return 0
 
   if (( ${#refspecs[@]} == 0 )); then
     # Configured push refspecs decide the target, not the current branch.
     [[ -n "$(_gp_git "$dir" config --get-all "remote.$remote.push")" ]] && return 0
-    # An earlier checkout/switch in the same command makes HEAD unknowable here.
-    [[ -n "${_GP_SWITCHED:-}" ]] && return 0
     local target
     target="$(_gp_implicit_target "$dir")"
     [[ -z "$target" ]] && return 0
@@ -97,7 +111,7 @@ _gp_args_need_review() {
 
   local r src dst
   for r in "${refspecs[@]}"; do
-    [[ "$r" == +* ]] && return 0
+    [[ "$r" == +* || "$r" == *'*'* ]] && return 0   # force, or glob refspec
     if [[ "$r" == *:* ]]; then
       src="${r%%:*}" dst="${r#*:}"
       [[ -z "$src" || -z "$dst" ]] && return 0
@@ -114,7 +128,13 @@ _gp_args_need_review() {
       dst="$(_gp_git "$dir" symbolic-ref --short -q HEAD)"
       [[ -z "$dst" ]] && return 0
     fi
-    dst="${dst#refs/heads/}"
+    # git DWIMs "heads/main" to refs/heads/main; anything else under refs/
+    # (remotes, notes, namespaces) is unusual enough to ask about.
+    case "$dst" in
+      refs/heads/*) dst="${dst#refs/heads/}" ;;
+      refs/*)       return 0 ;;
+      heads/*)      dst="${dst#heads/}" ;;
+    esac
     _gp_is_protected "$dir" "$remote" "$dst" && return 0
   done
   return 1
@@ -124,20 +144,22 @@ git_push_needs_review() {
   local cmd="$1" dir="${2:-$PWD}"
   local seg i gdir
   local -a w
-  _GP_SWITCHED=""
+  local unknown_dir="/nonexistent/git-push-unknown-dir"
+  _GP_MUTATED=""
 
   # Fail closed: this parser is a word splitter, not a shell. Anything it
   # cannot model in a segment that mentions both git and push is deferred:
-  # wrappers (env, command, sudo, xargs, sh -c, VAR=x prefixes, subshells),
-  # expansions/escapes ($ ` \ ( ) { }), git -c overrides, shell aliases.
+  # wrappers (env, command, sudo, xargs, sh -c, VAR=x prefixes, subshells,
+  # the git-push binary), expansions/escapes ($ ` \ ( ) { }), git -c
+  # overrides, alternate git dirs/namespaces, push-capable aliases.
   local mentions
 
   # Split into simple commands on ; & && || | and newlines, tracking `cd`.
   # fd redirects (2>&1, >&2, &>) are blanked first so '&' splits cleanly.
   while IFS= read -r seg; do
     mentions=""
-    [[ "$seg" =~ (^|[^[:alnum:]_-])git([^[:alnum:]_-]|$) \
-       && "$seg" =~ (^|[^[:alnum:]_-])push([^[:alnum:]_-]|$) ]] && mentions=1
+    [[ "$seg" =~ (^|[^[:alnum:]_])git([^[:alnum:]_]|$) \
+       && "$seg" =~ (^|[^[:alnum:]_])push([^[:alnum:]_]|$) ]] && mentions=1
     if [[ -n "$mentions" && "$seg" =~ [\$\`\\\(\)\{\}] ]]; then
       return 0
     fi
@@ -146,10 +168,16 @@ git_push_needs_review() {
     (( ${#w[@]} == 0 )) && continue
     for i in "${!w[@]}"; do w[i]="${w[i]//[\"\']/}"; done
 
-    if [[ "${w[0]}" == cd ]]; then
-      dir="$(_gp_resolve_dir "$dir" "${w[1]:-$HOME}")"
-      continue
-    fi
+    case "${w[0]}" in
+      cd|pushd)
+        if [[ "${w[1]:-}" == - || "${w[1]:-}" == [-+]* ]]; then
+          dir="$unknown_dir"
+        else
+          dir="$(_gp_resolve_dir "$dir" "${w[1]:-$HOME}")"
+        fi
+        continue ;;
+      popd) dir="$unknown_dir"; continue ;;
+    esac
     if [[ "${w[0]}" != git ]]; then
       [[ -n "$mentions" ]] && return 0
       continue
@@ -160,17 +188,22 @@ git_push_needs_review() {
     while (( i < ${#w[@]} )); do
       case "${w[i]}" in
         -C) gdir="$(_gp_resolve_dir "$dir" "${w[i+1]:-.}")"; i=$((i+2)) ;;
-        -c|-c*|--config-env*)
+        -c|-c*|--config-env*|--git-dir*|--work-tree*|--namespace*|--exec-path*)
           [[ -n "$mentions" ]] && return 0
-          [[ "${w[i]}" == -c ]] && i=$((i+2)) || i=$((i+1)) ;;
-        --git-dir|--work-tree|--namespace) i=$((i+2)) ;;
+          _GP_MUTATED=1
+          [[ "${w[i]}" == *=* || "${w[i]}" == -c?* ]] && i=$((i+1)) || i=$((i+2)) ;;
         -*) i=$((i+1)) ;;
         *) break ;;
       esac
     done
     case "${w[i]:-}" in
-      checkout|switch) _GP_SWITCHED=1; continue ;;
       push) ;;
+      # Read-only, or changes only the working tree/index/current-branch
+      # commits — none of these alter what a later push would target.
+      status|log|diff|show|fetch|pull|add|commit|stash|rev-parse|ls-files|\
+      ls-remote|describe|shortlog|blame|grep|cat-file|show-ref|for-each-ref|\
+      merge-base|rev-list|reflog|version|help)
+        continue ;;
       *)
         # A git alias may expand to push (or to anything, if it is '!shell').
         local alias_val
@@ -179,6 +212,13 @@ git_push_needs_review() {
            && [[ "$alias_val" == '!'* || "$alias_val" =~ (^|[[:space:]])push([[:space:]]|$) ]]; then
           return 0
         fi
+        # After a state change, an unknown subcommand may be an alias defined
+        # earlier in this same line (git config alias.x push && git x).
+        [[ -n "$_GP_MUTATED" && "$cmd" =~ (^|[^[:alnum:]_])push([^[:alnum:]_]|$) ]] && return 0
+        # Anything else (checkout, switch, branch, tag, config, remote,
+        # update-ref, symbolic-ref, reset, …) may change HEAD, refs, aliases
+        # or remotes before the push runs.
+        _GP_MUTATED=1
         continue ;;
     esac
 
