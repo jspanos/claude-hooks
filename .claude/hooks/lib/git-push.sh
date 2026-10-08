@@ -80,20 +80,22 @@ _gp_args_need_review() {
   while (( $# )); do
     case "$1" in
       --dry-run) return 1 ;;
-      --force|--force-with-lease*|--force-if-includes|--mirror|--all|--branches|\
-      --delete|--tags|--follow-tags|--prune)
-        return 0 ;;
-      # Alternate destination or remote-side program: never auto-approve.
-      --repo*|--receive-pack*|--exec*) return 0 ;;
+      # Allowlist: options that cannot widen what is pushed or where.
+      --quiet|--verbose|--progress|--no-progress|--set-upstream|--verify|\
+      --no-verify|--atomic|--no-atomic|--porcelain|--ipv4|--ipv6|--signed|\
+      --signed=*|--no-signed|--no-follow-tags|--no-force-with-lease|\
+      --no-recurse-submodules|--recurse-submodules=no|--recurse-submodules=check|\
+      --push-option=*) ;;
       --push-option|-o) shift ;;
-      --recurse-submodules=no|--recurse-submodules=check|--no-recurse-submodules) ;;
-      --recurse-submodules*) return 0 ;;   # pushes other repositories too
-      --*) ;;
+      --) shift; pos+=("$@"); break ;;
+      # Everything else asks: --force, --delete, --tags, --mirror, --repo,
+      # --receive-pack, … and their abbreviations (git accepts --forc, --rep=).
+      --*) return 0 ;;
       *'>'|*'<') shift ;;               # bare redirect operator: skip its target
-      *'>'*|*'<'*) ;;                   # 2>&1, >/dev/null
+      *'>'*|*'<'*) ;;                   # >/dev/null
       -*)
-        [[ "$1" == *n* ]] && return 1   # -n is --dry-run
-        [[ "$1" == *[fd]* ]] && return 0
+        [[ "$1" =~ ^-[uqvn46]+$ ]] || return 0   # -f, -d, unknown letters
+        [[ "$1" == *n* ]] && return 1            # -n is --dry-run
         ;;
       *) pos+=("$1") ;;
     esac
@@ -159,12 +161,47 @@ _gp_args_need_review() {
   return 1
 }
 
+# Split a command line into simple commands, one per output line, on
+# unquoted ; & && || | and newlines. Quote-aware: separators and newlines
+# inside '…' / "…" or after a backslash stay in their word. fd redirects
+# (2>&1, >&2, &>) are kept intact instead of splitting on their '&'.
+_gp_segments() {
+  printf '%s' "$1" | perl -e '
+    local $/; my $s = <STDIN>; my ($q, $o) = ("", "");
+    my ($sq, $dq) = (chr 39, chr 34);
+    for (my $i = 0; $i < length $s; $i++) {
+      my $c = substr($s, $i, 1);
+      $c = " " if $q ne "" && $c eq "\n";
+      if ($q eq $sq) { $o .= $c; $q = "" if $c eq $sq; next }
+      if ($c eq "\\") { my $n = substr($s, $i + 1, 1); $o .= $c . ($n eq "\n" ? " " : $n); $i++; next }
+      if ($q eq $dq) { $o .= $c; $q = "" if $c eq $dq; next }
+      if ($c eq $sq || $c eq $dq) { $q = $c; $o .= $c; next }
+      if (($c eq ">" || $c eq "<") && substr($s, $i + 1, 1) eq "&") { $o .= "$c&"; $i++; next }
+      if ($c eq "&" && substr($s, $i + 1, 1) eq ">") { $o .= " "; next }
+      if ($c =~ /[;&|\n]/) { $o .= "\n"; next }
+      $o .= $c;
+    }
+    print $o, "\n";
+  '
+}
+
 git_push_needs_review() {
   local cmd="$1" dir="${2:-$PWD}"
   local seg i gdir
   local -a w
   local unknown_dir="/nonexistent/git-push-unknown-dir"
   _GP_MUTATED=""
+
+  # Fast path: nothing that names git or push, and no eval/base64 to hide
+  # them, cannot push. Keeps every heuristic below away from unrelated
+  # commands (grep patterns with \| and the like).
+  local flat="${cmd//[\"\'\\]/}"
+  shopt -s nocasematch
+  if [[ ! "$flat" =~ git|push|eval|base64 ]]; then
+    shopt -u nocasematch
+    return 1
+  fi
+  shopt -u nocasematch
 
   # Fail closed: this parser is a word splitter, not a shell. Anything it
   # cannot model in a segment that mentions both git and push is deferred:
@@ -173,22 +210,27 @@ git_push_needs_review() {
   # overrides, alternate git dirs/namespaces, push-capable aliases.
   local mentions
 
-  # Split into simple commands on ; & && || | and newlines, tracking `cd`.
-  # fd redirects (2>&1, >&2, &>) are blanked first so '&' splits cleanly.
+  # Walk simple commands in order, tracking `cd`.
   local norm
   while IFS= read -r seg; do
     # Match on the text the shell would see after quote removal and
     # backslash-unescaping, so g\it / pu""sh can't hide a push.
     norm="${seg//[\"\'\\]/}"
     mentions=""
+    # Data-only programs: their arguments are text, never commands
+    # ("grep 'git push' README"). Only a substitution can execute.
+    read -r i _ <<< "$norm"
+    case "$i" in
+      grep|egrep|fgrep|rg|ag|ack|echo|printf|cat|ls|head|tail|wc|less|more|\
+      jq|diff|stat|file|tr|cut|sort|uniq|basename|dirname|realpath)
+        [[ "$seg" == *'$('* || "$seg" == *'`'* ]] && return 0
+        continue ;;
+    esac
     # Whole words only ('-' and '.' count as word chars, so a file named
     # tests/git-push.test.sh is not a push); the git-push binary is exact.
     [[ "$norm" =~ (^|[^[:alnum:]_.-])git([^[:alnum:]_.-]|$) \
        && "$norm" =~ (^|[^[:alnum:]_.-])push([^[:alnum:]_.-]|$) ]] && mentions=1
     [[ "$norm" =~ (^|[[:space:]/])git-push([[:space:]]|$) ]] && return 0
-    if [[ -n "$mentions" && "$seg" =~ [\$\`\\\(\)\{\}] ]]; then
-      return 0
-    fi
 
     read -ra w <<< "$seg"
     (( ${#w[@]} == 0 )) && continue
@@ -197,6 +239,10 @@ git_push_needs_review() {
     [[ "${w[0]}" =~ [\$\`\\] ]] && return 0
     [[ "${w[0]}" == eval && "$seg" =~ [\$\`] ]] && return 0
     for i in "${!w[@]}"; do w[i]="${w[i]//[\"\'\\]/}"; done
+
+    # GIT_DIR / GIT_NAMESPACE / … exported or assigned here retarget later
+    # git commands in ways this parser does not model.
+    [[ "${w[0]}" != git && "$norm" =~ (^|[^[:alnum:]_])GIT_[A-Z_]+ ]] && _GP_MUTATED=1
 
     case "${w[0]}" in
       cd|pushd)
@@ -227,7 +273,8 @@ git_push_needs_review() {
       esac
     done
     case "${w[i]:-}" in
-      push) ;;
+      # Expansions/escapes anywhere in the push itself: can't know the args.
+      push) [[ "$seg" =~ [\$\`\\\(\)\{\}] ]] && return 0 ;;
       # Read-only, or changes only the working tree/index/current-branch
       # commits — none of these alter what a later push would target.
       status|log|diff|show|fetch|pull|add|commit|stash|rev-parse|ls-files|\
@@ -255,8 +302,7 @@ git_push_needs_review() {
     esac
 
     _gp_args_need_review "$gdir" "${w[@]:i+1}" && return 0
-  done < <(printf '%s\n' "$cmd" \
-    | perl -pe 's/\d*>&\d*-?/ /g; s/&>>?/ /g; s/\|\||&&|[;|&]/\n/g')
+  done < <(_gp_segments "$cmd")
 
   return 1
 }

