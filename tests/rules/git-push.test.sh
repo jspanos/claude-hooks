@@ -298,6 +298,18 @@ assert_blocked "exported GIT_DIR"
 check "GIT_NAMESPACE=x; export GIT_NAMESPACE; git push origin feature"
 assert_blocked "assigned then exported GIT_NAMESPACE"
 
+check "echo '[alias] x = push' >> .git/config && git x origin main"
+assert_blocked "alias planted via redirect into .git/config"
+
+check "printf '[alias]\\n\\ty = push\\n' | tee -a .git/config && git y origin main"
+assert_blocked "alias planted via tee into .git/config"
+
+check "echo hi > notes.txt && git push origin feature"
+assert_blocked "any redirect before a push is a state change"
+
+check "grep -rn foo . 2>/dev/null && git push origin feature"
+assert_allowed "/dev/null redirect is not a state change"
+
 suite "Quote-aware splitting — no false positives"
 
 check "cd repos/x && grep -rn -i 'pod-security\\|admission-control-config\\|PodSecurity' --include=*.yml . 2>/dev/null | grep -v '/chart/' | head -20"

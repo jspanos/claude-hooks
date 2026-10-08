@@ -217,6 +217,15 @@ git_push_needs_review() {
     # backslash-unescaping, so g\it / pu""sh can't hide a push.
     norm="${seg//[\"\'\\]/}"
     mentions=""
+    # Writes into git config/state by a non-git command (echo … >> .git/config,
+    # tee ~/.gitconfig, cp x .git/config) make later git reads stale.
+    read -r i _ <<< "$norm"
+    if [[ "$i" != git ]]; then
+      local redir="${seg//[0-9]>&[0-9]/}"
+      redir="${redir//>\/dev\/null/}"
+      [[ "$redir" == *'>'* ]] && _GP_MUTATED=1
+      [[ "$norm" =~ \.git([/[:space:]]|config|$)|gitconfig ]] && _GP_MUTATED=1
+    fi
     # Data-only programs: their arguments are text, never commands
     # ("grep 'git push' README"). Only a substitution can execute.
     read -r i _ <<< "$norm"
