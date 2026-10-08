@@ -10,6 +10,7 @@ Safety guards, audit logging, and context injection for Claude Code — deployab
   lib/common.sh              # shared utilities (sourced by all hooks)
   lib/protected-paths.sh     # matcher for hook-infrastructure paths (bash-7, file-2)
   lib/mutation-targets.sh    # "what does this command destroy?" (bash-2, bash-7)
+  lib/git-push.sh            # routine vs. risky git push (permission-request)
   rules/                     # one file per rule, sourced by pre-tool-use.sh
     bash-1-absolute-paths.sh
     bash-2-uncommitted-files.sh
@@ -20,6 +21,7 @@ Safety guards, audit logging, and context injection for Claude Code — deployab
     bash-7-protected-config.sh
     bash-8-interpreter-file-ops.sh
     bash-9-blocking-waits.sh
+    bash-10-quoted-newline-hash.sh
     file-1-sensitive-paths.sh
     file-2-protected-config.sh
   pre-tool-use.sh            # PreToolUse dispatcher: logs + runs all rules
@@ -56,8 +58,8 @@ Wired in `.claude/settings.json`:
 
 | Event | Script | Purpose |
 |---|---|---|
-| `PermissionRequest` | `permission-request.sh` | Auto-allow safe ops, auto-deny dangerous, defer external state changes |
-| `PreToolUse` | `pre-tool-use.sh` | Log + apply all 11 rules; may rewrite the Bash `timeout` |
+| `PermissionRequest` | `permission-request.sh` | Auto-allow safe ops, auto-deny dangerous, defer external state changes (plain feature-branch `git push` is allowed; force/delete/tag/protected-branch pushes defer) |
+| `PreToolUse` | `pre-tool-use.sh` | Log + apply all 12 rules; may rewrite the Bash `timeout` |
 | `PostToolUse` | `audit/post-tool-audit.sh` | JSONL outcome log with `duration_ms` (async) |
 | `SessionStart` | `context/session-start-inject.sh` | Re-inject project context |
 | `UserPromptSubmit` | `context/prompt-inject.sh` | Keyword-triggered section injection |
@@ -75,6 +77,7 @@ Wired in `.claude/settings.json`:
 | `bash-7` | Bash | Deleting/overwriting/chmod-ing `.claude/hooks/`, `settings*.json` |
 | `bash-8` | Bash | Inline `python -c` / `node -e` code that mutates files or shells out |
 | `bash-9` | Bash | Foreground waits on external state (CI watching, cluster/cloud waiters, `tail -f`, dev servers, `sleep` > 5s, `until`/`while` poll loops); also sets and clamps the Bash `timeout` |
+| `bash-10` | Bash | Quoted argument containing newline + `#` (inline markdown PR/commit bodies) — Claude Code force-prompts on these regardless of allow rules; use `--body-file` / `-F` |
 | `file-1` | Write/Edit | Writes to `.env`, `*.pem`, `.ssh/`, kubeconfig, credentials |
 | `file-2` | Write/Edit + any path-taking tool | Writes to hook enforcement files |
 

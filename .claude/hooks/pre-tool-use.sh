@@ -85,6 +85,7 @@ case "$TOOL_NAME" in
     bash_check_python_venv           "$COMMAND"
     bash_check_protected_config      "$COMMAND"
     bash_check_interpreter_file_ops  "$COMMAND"
+    bash_check_quoted_newline_hash   "$COMMAND"
 
     # ── Wall-clock rules (run last: they may rewrite the tool input) ────────
     IFS=$'\t' read -r RUN_IN_BACKGROUND TIMEOUT_MS < <(

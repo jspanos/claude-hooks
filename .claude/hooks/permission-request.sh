@@ -8,7 +8,8 @@
 #   ALLOW  — safe, project-local operations; agent flows without prompting
 #   DENY   — dangerous patterns (belt+suspenders with pre-tool-use)
 #   DEFER  — exit 0, no output; shows user the permission dialog ONLY for
-#             irreversible external state changes (git push, publish, deploy)
+#             irreversible external state changes (force/protected-branch
+#             git push, publish, deploy)
 #
 # Rules (by tool):
 #   Read-only tools     → always ALLOW
@@ -22,6 +23,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/git-push.sh"
 
 require_jq
 
@@ -255,9 +257,11 @@ _bash_is_dangerous() {
 _bash_is_external_publish() {
   local cmd="$1"
 
+  # Git: force/delete/tag pushes and pushes to protected branches only —
+  # a plain push of a feature branch is routine (see lib/git-push.sh)
+  git_push_needs_review "$cmd" "$CWD" && return 0
+
   local -a DEFER_PATTERNS=(
-    # Git: push to remote (any remote, any branch, except dry-run)
-    '^\s*git\b.*\bpush\b(?!.*--dry-run)'
     # Package publishing
     '^\s*npm\s+(publish|unpublish)\b'
     '^\s*(yarn|pnpm)\s+publish\b'

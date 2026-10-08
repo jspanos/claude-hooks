@@ -153,7 +153,9 @@ Separate from the safety rules, the `PermissionRequest` hook handles Claude Code
 | Writes to sensitive paths | Deny | Hard block |
 | Writes in any other git work tree (not git-ignored) | Allow | Recoverable via git |
 | Writes elsewhere (non-git dirs, ignored files, `.git/` internals, repos rooted at `$HOME` or above, `~/.claude/`) | Defer | Not recoverable or too broad; ask user |
-| External publishing (git push, npm publish, terraform apply…) | Defer | Irreversible; ask user |
+| Plain `git push` of a feature branch | Allow | Routine, reversible |
+| Risky `git push`: force, delete, tags, `--mirror`/`--all`, or to main/master/trunk/develop/prod/release*/remote default | Defer | Irreversible or shared; ask user |
+| External publishing (npm publish, terraform apply…) | Defer | Irreversible; ask user |
 
 "Defer" means Claude Code shows you a confirmation dialog before proceeding.
 
