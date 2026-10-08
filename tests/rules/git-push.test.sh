@@ -249,7 +249,33 @@ assert_blocked "pushRemote points at a mirror remote"
 git -C "$REPO" config --unset remote.backup.mirror
 git -C "$REPO" config --unset branch.feature.pushRemote
 
+suite "Obfuscated pushes — deferred"
+
+check 'g\it push origin main'
+assert_blocked "backslash in command name"
+
+check 'git p\ush origin main'
+assert_blocked "backslash in subcommand"
+
+check "git \$'\\x70ush' origin main"
+assert_blocked "ANSI-C quoted subcommand"
+
+check 'G=git; $G push origin main'
+assert_blocked "command name from variable"
+
+check 'git ${SUB} origin main'
+assert_blocked "subcommand from variable"
+
+check 'X=Z2l0IHB1c2g=; eval "$(echo $X | base64 -d) origin main"'
+assert_blocked "eval of decoded text"
+
+check 'git pu""sh origin main'
+assert_blocked "empty quotes inside subcommand"
+
 suite "Still routine"
+
+check 'git -C "$HOME/x" status && git log --format="%H $x" -1'
+assert_allowed "expansions in non-push git args"
 
 check "bash tests/rules/git-push.test.sh 2>&1 | tail -15; echo \"exit \${PIPESTATUS[0]}\""
 assert_allowed "running a file named git-push.test.sh is not a push"

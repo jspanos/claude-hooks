@@ -175,20 +175,28 @@ git_push_needs_review() {
 
   # Split into simple commands on ; & && || | and newlines, tracking `cd`.
   # fd redirects (2>&1, >&2, &>) are blanked first so '&' splits cleanly.
+  local norm
   while IFS= read -r seg; do
+    # Match on the text the shell would see after quote removal and
+    # backslash-unescaping, so g\it / pu""sh can't hide a push.
+    norm="${seg//[\"\'\\]/}"
     mentions=""
     # Whole words only ('-' and '.' count as word chars, so a file named
     # tests/git-push.test.sh is not a push); the git-push binary is exact.
-    [[ "$seg" =~ (^|[^[:alnum:]_.-])git([^[:alnum:]_.-]|$) \
-       && "$seg" =~ (^|[^[:alnum:]_.-])push([^[:alnum:]_.-]|$) ]] && mentions=1
-    [[ "$seg" =~ (^|[[:space:]/])git-push([[:space:]]|$) ]] && return 0
+    [[ "$norm" =~ (^|[^[:alnum:]_.-])git([^[:alnum:]_.-]|$) \
+       && "$norm" =~ (^|[^[:alnum:]_.-])push([^[:alnum:]_.-]|$) ]] && mentions=1
+    [[ "$norm" =~ (^|[[:space:]/])git-push([[:space:]]|$) ]] && return 0
     if [[ -n "$mentions" && "$seg" =~ [\$\`\\\(\)\{\}] ]]; then
       return 0
     fi
 
     read -ra w <<< "$seg"
     (( ${#w[@]} == 0 )) && continue
-    for i in "${!w[@]}"; do w[i]="${w[i]//[\"\']/}"; done
+    # A command name built from expansions/escapes ($G, g\it, $'…') or an
+    # eval of expanded text could be anything, including git push.
+    [[ "${w[0]}" =~ [\$\`\\] ]] && return 0
+    [[ "${w[0]}" == eval && "$seg" =~ [\$\`] ]] && return 0
+    for i in "${!w[@]}"; do w[i]="${w[i]//[\"\'\\]/}"; done
 
     case "${w[0]}" in
       cd|pushd)
@@ -227,6 +235,8 @@ git_push_needs_review() {
       merge-base|rev-list|reflog|version|help)
         continue ;;
       *)
+        # A subcommand built from an expansion ($SUB, $'\x70ush') is unknowable.
+        [[ "${w[i]:-}" =~ [\$\`] ]] && return 0
         # A git alias may expand to push (or to anything, if it is '!shell').
         local alias_val
         alias_val="$(_gp_git "$gdir" config --get "alias.${w[i]:-}")"

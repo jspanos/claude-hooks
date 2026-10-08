@@ -138,6 +138,9 @@ These are guardrails against accidents, not a security boundary:
 - **Script contents are never inspected.** `Write scripts/x.py` then
   `uv run python3 scripts/x.py` passes every rule. This is structural — the
   `scripts/` workflow `bash-4` recommends is itself unchecked.
+- **The git-push classifier sees command text only.** It fails closed on
+  wrappers, expansions, escapes and eval, but a push from inside a script
+  file, Makefile or npm script is invisible to it.
 - **Compiled/aliased escapes are unmodelled** — `make`, `npm run`, a shell
   function, or any binary that writes files.
 
